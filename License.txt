@@ -1,0 +1,78 @@
+CADSys 4, Copyright © 2001 by Piero Valagussa <pivalag@tin.it>.  
+All rights reserved.
+
+You are grant to use the CADSys library (LIBRARY) in your programs 
+for either commercial or non commercial uses, provided that the 
+following conditions are met:
+
+1. All copies of the programs you create must bear this copyright (in
+   a dialog box or somewhere else):
+
+   CADSys 4, Copyright © 2001 by Piero Valagussa <pivalag@tin.it>.  
+   All rights reserved.   
+
+2. You may not remove or alter any Piero Valagussa copyright. trademark, 
+   or other proprietary rights notice contained in any portion of 
+   Piero Valagussa libraries, source code, redistributables or other 
+   files that bear such a notice.
+3. You will remain solely responsible to anyone receiving your programs 
+   for support, service,  upgrades, or technical or other assistance, 
+   and such recipients will have no right to contact  Piero Valagussa 
+   for such services or assistance.
+4. You will indemnify and hold Piero Valagussa, its related companies, 
+   and its suppliers harmless from and against any claims or liabilities 
+   arising out of the use, reproduction, or  distribution of your programs.
+5. All Piero Valagussa libraries, source code and other files remain 
+   Piero Valagussa's exclusive property.
+6. If you use the LIBRARY to create another graphics library, you
+   have to use this license for it.
+
+By using the library you accept that requirements and the following.
+
+LIMITED WARRANTY
+----------------
+
+NO WARRANTY IS PROVIDED TO ANYONE FOR THIS SOFTWARE/COMPONENT/LIBRARY. 
+THIS SOFTWARE/COMPONENT/LIBRARY (INCLUDING INSTRUCTION FOR USE) ARE PROVIDES 
+"AS IS" WITHOUT WARRANTY OF ANY KIND.
+
+The entire and  exclusive liability and remedy for breach of this limited warranty 
+shall not include or extend to any claim for or right to recover any damages, including 
+but not limited to, loss of profit, data, or use of the software/component/library or 
+special, incidental or consequential damages, or other similar claims, even if Piero 
+Valagussa has been specifically advised of the possibility of such damages. In no event 
+will Piero Valagussa's liability for any damages to you or any other person ever exceed 
+the lower of the list price or the actual price paid for the package or the licence to 
+use the software/component/library, regardless of the form of the claim.
+
+PIERO VALAGUSSA SPECIFICALLY DISCLAIMS ALL OTHER WARRANTIES, REPRESENTATIONS, OR 
+CONDITIONS, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO, ANY IMPLIED WARRANTY OR 
+CONDITION OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE. ALL OTHER IMPLIED 
+TERMS ARE EXCLUDED.
+
+Specifically, Piero Valagussa makes no representation or warranty that the software/
+component/library or documentation are "error free." or meet any user's particular 
+standards, requirements, or needs.
+
+Piero Valagussa is not responsible for, and does not make any representation, warranty, 
+or condition concerning product, media, software/component/library, or documentation not 
+manufactured or supplied by Piero Valagussa, such as third parties' programs which are 
+designed using Piero Valagussa software/component/library or which include 
+Piero Valagussa programs or files. 
+
+GENERAL PROVISIONS
+------------------
+
+This statement may only be modified in writing signed by you and an authorised officer 
+of Piero Valagussa. If any provision of this statement is found void or unenforceable, 
+the remainder will remain valid and enforceable according to its terms. If any remedy 
+provided is determined to have failed of its essential purpose, all limitations of 
+liability and exclusions of damages set forth in the limited warranty shall remain in 
+effect.
+
+This statement shall be construed, interpreted and governed by the laws of the Italian 
+State. This statement gives you specific legal rights: you may have others which vary 
+from state to state and from country to country. (UK STATUTORY RIGHTS ARE NOT AFFECTED 
+OR PREJUDICED AS TO SOFTWARE/COMPONENT/LIBRARY ACQUIRED OTHER THAN IN THE COURSE OF A 
+BUSINESS.) Piero Valagussa reserves all rights not specifically granted in this 
+statement.
