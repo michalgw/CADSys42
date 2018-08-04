@@ -2893,9 +2893,10 @@ type
     }
     procedure Paint; override; { Repaint all the objects. }
     procedure WMEraseBkgnd(var Message: TLMEraseBkgnd); message LM_ERASEBKGND;
-    procedure WMSize(var Message: TLMSize); message LM_SIZE;
-    //procedure DoSetBounds(ALeft, ATop, AWidth, AHeight: integer); override;
-    //procedure DoAdjustClientRectChange(const InvalidateRect: Boolean = True);
+    //procedure WMSize(var Message: TLMSize); message LM_SIZE;
+  public
+    procedure SetBounds(ALeft, ATop, AWidth, AHeight: integer); override;
+  protected
     procedure CMMouseEnter(var Message: TLMessage); message CM_MOUSEENTER;
     procedure CMMouseLeave(var Message: TLMessage); message CM_MOUSELEAVE;
     {: This method is called by the viewport whenever a changing in the
@@ -9827,27 +9828,17 @@ begin
    Message.Result := 1;
 end;
 
-procedure TCADViewport.WMSize(var Message: TLMSize);
+//procedure TCADViewport.WMSize(var Message: TLMSize);
+//begin
+//  inherited;
+//  DoResize;
+//end;
+
+procedure TCADViewport.SetBounds(ALeft, ATop, AWidth, AHeight: integer);
 begin
-  inherited;
+  inherited SetBounds(ALeft, ATop, AWidth, AHeight);
   DoResize;
 end;
-
-//procedure TCADViewport.DoAdjustClientRectChange(const InvalidateRect: Boolean);
-//begin
-//  inherited DoAdjustClientRectChange(InvalidateRect);
-//  if not HandleAllocated then
-//    Exit;
-//  DoResize;
-//end;
-
-//procedure TCADViewport.DoSetBounds(ALeft, ATop, AWidth, AHeight: integer);
-//begin
-//  inherited DoSetBounds(ALeft, ATop, AWidth, AHeight);
-//  if not HandleAllocated then
-//    Exit;
-//  DoResize;
-//end;
 
 procedure TCADViewport.CMMouseEnter(var Message: TLMessage);
 begin
@@ -10017,6 +10008,8 @@ begin
   fPaintingThread := nil;
   CopingFrequency := 0;
   fDrawMode := DRAWMODE_NORMAL;
+  fOffScreenBitmap := TBitmap.Create;
+  fOffScreenBitmap.PixelFormat := pf24bit;
   Height := 50;
   Width := 50;
   FOnClear := nil;
@@ -10048,10 +10041,8 @@ begin
   SetRubberColor(clRed);
   FAspectRatio := 0.0;
   fGridOnTop := False;
-  fOffScreenBitmap := TBitmap.Create;
-  fOffScreenBitmap.Height := Height;
-  fOffScreenBitmap.Width := Width;
-  fOffScreenBitmap.PixelFormat := pf24bit;
+  //fOffScreenBitmap.Height := Height;
+  //fOffScreenBitmap.Width := Width;
   fOffScreenCanvas := CreateOffScreenCanvas(fOffScreenBitmap.Canvas);
   fOnScreenCanvas := TDecorativeCanvas.Create(Canvas);
 end;
