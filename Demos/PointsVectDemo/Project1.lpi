@@ -26,18 +26,15 @@
       <FormatVersion Value="2"/>
       <Modes Count="0"/>
     </RunParams>
-    <RequiredPackages Count="3">
+    <RequiredPackages Count="2">
       <Item1>
-        <PackageName Value="Printer4Lazarus"/>
+        <PackageName Value="cadsys"/>
       </Item1>
       <Item2>
-        <PackageName Value="cadsys"/>
-      </Item2>
-      <Item3>
         <PackageName Value="LCL"/>
-      </Item3>
+      </Item2>
     </RequiredPackages>
-    <Units Count="3">
+    <Units Count="2">
       <Unit0>
         <Filename Value="Project1.lpr"/>
         <IsPartOfProject Value="True"/>
@@ -45,17 +42,8 @@
       <Unit1>
         <Filename Value="Unit1.pas"/>
         <IsPartOfProject Value="True"/>
-        <ComponentName Value="Form1"/>
         <HasResources Value="True"/>
-        <ResourceBaseClass Value="Form"/>
       </Unit1>
-      <Unit2>
-        <Filename Value="DefLayersFrm.pas"/>
-        <IsPartOfProject Value="True"/>
-        <ComponentName Value="DefLayersForm"/>
-        <HasResources Value="True"/>
-        <ResourceBaseClass Value="Form"/>
-      </Unit2>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
