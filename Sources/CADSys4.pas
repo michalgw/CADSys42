@@ -4926,7 +4926,7 @@ type
     fOldOnPaint, fOnIdle: TNotifyEvent;
     fOnDescriptionChanged: TNotifyEvent;
     fShowCursorCross: Boolean;
-    fNewWndProc, fOldWndProc: Pointer;
+    fNewWndProc, fOldWndProc: TWndMethod;
 
     procedure SetShowCursorCross(B: Boolean);
     procedure SetCursorColor(C: TColor);
@@ -12386,9 +12386,12 @@ begin
   if Assigned(fNewWndProc) then
    begin
      if not (csDestroying in fLinkedViewport.ComponentState) then
-      SetWindowLong(fLinkedViewport.Handle, gwl_wndProc, LongInt(fOldWndProc));
-     FreeObjectInstance(fNewWndProc);
+      fLinkedViewport.WindowProc := fOldWndProc;
      fNewWndProc := nil;
+     //if not (csDestroying in fLinkedViewport.ComponentState) then
+     // SetWindowLong(fLinkedViewport.Handle, gwl_wndProc, PtrInt(fOldWndProc));
+     //FreeObjectInstance(fNewWndProc);
+     //fNewWndProc := nil;
    end;
   // Reassign the old on paint.
   if Assigned(fLinkedViewport) then
@@ -12401,8 +12404,11 @@ begin
   if Assigned(V) then
    begin
      V.FreeNotification(Self);
-     fNewWndProc := MakeObjectInstance(SubclassedWinProc);
-     fOldWndProc := Pointer(SetWindowLong(V.Handle, gwl_wndProc, LongInt(fNewWndProc)));
+     fNewWndProc := SubclassedWinProc;
+     fOldWndProc := V.WindowProc;
+     V.WindowProc := fNewWndProc;
+     //fNewWndProc := MakeObjectInstance(SubclassedWinProc);
+     //fOldWndProc := Pointer(SetWindowLong(V.Handle, gwl_wndProc, LongInt(fNewWndProc)));
      // Assign the new OnPaint because it is called not only by window msgs.
      fOldOnPaint := V.OnPaint;
      V.OnPaint := ViewOnPaint;
@@ -12689,7 +12695,9 @@ begin
      Propagate := ViewOnMouseMove(LinkedViewport, KeysToShiftState(Keys), XPos, YPos);
    CM_INVALIDATE:
     begin
-      Msg.Result := CallWindowProc(fOldWndProc, fLinkedViewport.Handle, Msg.Msg, Msg.WParam, Msg.LParam);
+      //Msg.Result := CallWindowProc(fOldWndProc, fLinkedViewport.Handle, Msg.Msg, Msg.WParam, Msg.LParam);
+      if Assigned(fOldWndProc) then
+       fOldWndProc(Msg);
       ViewOnPaint(Self);
       Propagate := False;
     end;
@@ -12727,7 +12735,9 @@ begin
   LastSet := fLinkedViewport.DisableMouseEvents;
   try
     fLinkedViewport.DisableMouseEvents := not Propagate;
-    Msg.Result := CallWindowProc(fOldWndProc, fLinkedViewport.Handle, Msg.Msg, Msg.WParam, Msg.LParam);
+    //Msg.Result := CallWindowProc(fOldWndProc, fLinkedViewport.Handle, Msg.Msg, Msg.WParam, Msg.LParam);
+    if Assigned(fOldWndProc) then
+     fOldWndProc(Msg);
   finally
     fLinkedViewport.DisableMouseEvents := LastSet;
   end;

@@ -3,6 +3,9 @@ program Project1;
 {$MODE Delphi}
 
 uses
+  {$IFDEF UNIX}
+  cthreads,
+  {$ENDIF}
   Forms, Interfaces,
   Unit1 in 'Unit1.pas' {Form1},
   DefLayersFrm in 'DefLayersFrm.pas' {DefLayersForm};

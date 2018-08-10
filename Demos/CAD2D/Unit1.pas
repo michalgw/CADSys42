@@ -781,5 +781,5 @@ begin
 end;
 
 initialization
-  CADSysRegisterFontFromFile(0, ExtractFilePath(Application.ExeName) + '\RomanC.fnt');
+  CADSysRegisterFontFromFile(0, IncludeTrailingPathDelimiter(ExtractFilePath(Application.ExeName)) + 'RomanC.fnt');
 end.
