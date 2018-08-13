@@ -21,7 +21,7 @@ uses SysUtils, Classes, Graphics, ComCtrls,
 
 type
 // -----===== Starting Cs4DXFReadWrite.pas =====-----
-  TSections = (scHeader, scTables, scBlocks, scEntities, scUnknow);
+  TSections = (scHeader, scClasses, scObjects, scThumbinalImage, scTables, scBlocks, scEntities, scUnknow);
 
   { Used to store readed groups from 0 group to 0 group. }
   TGroupTable = array[0..512] of Variant;
@@ -290,6 +290,12 @@ begin
   ConsumeGroup;
   if FGroupValue = 'HEADER' then
    FCurrentSection := scHeader
+  else if FGroupValue = 'CLASSES' then
+   FCurrentSection := scClasses
+  else if FGroupValue = 'OBJECTS' then
+   FCurrentSection := scObjects
+  else if FGroupValue = 'THUMBNAILIMAGE' then
+   FCurrentSection := scThumbinalImage
   else if FGroupValue = 'TABLES' then
    FCurrentSection := scTables
   else if FGroupValue = 'BLOCKS' then
