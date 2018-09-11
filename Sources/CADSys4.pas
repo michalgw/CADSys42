@@ -10307,7 +10307,7 @@ procedure TCADViewport.Repaint;
 begin
   if (csReadingState in ControlState) then
    Exit;
-  if fTransparent then
+  if fTransparent and Assigned(Parent) then
    Parent.Repaint;
   RepaintRect(FVisualWindow);
 end;
