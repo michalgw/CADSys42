@@ -9376,7 +9376,7 @@ begin
   try
    repeat
      Deleted := 0;
-     TmpObj := TmpIter.First;
+     TmpObj := TmpIter.Last;
      while Assigned(TmpObj) do
       begin
        try
@@ -9384,7 +9384,7 @@ begin
          Inc(Deleted);
          TmpObj := TmpIter.Current;
        except
-         TmpObj := TmpIter.Next;
+         TmpObj := TmpIter.Prev;
        end;
      end;
      if (Deleted = 0) and (fListOfBlocks.Count > 0) then
