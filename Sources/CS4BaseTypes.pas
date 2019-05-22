@@ -23,7 +23,8 @@ type
    <B=Note>: I don't think that this type will change due to storage
    and speed efficency.
 }
-  TRealType = Single;
+ // TRealType = Single;
+  TRealType = Double;
 {: This type is the result information of a clipping method. The
    clipping functions are used internally by the library and you
    don't need to use them directly.
