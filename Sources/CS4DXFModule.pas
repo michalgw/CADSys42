@@ -89,7 +89,7 @@ type
     { Read the DXF entities. }
     procedure ReadEntities;
   protected
-    // Leggono le entit‡
+    // Leggono le entit√†
     function ReadLine2D(Entry: TGroupTable): TLine2D;
     function ReadTrace2D(Entry: TGroupTable): TPolyline2D;
     function ReadSolid2D(Entry: TGroupTable): TPolyline2D;
@@ -557,7 +557,7 @@ begin
         FDXFRead.ReadAnEntry(0, LocalEntry);
       end;
      if Result.Points.Count = 0 then
-      begin // La spline Ë stata creata senza i punti aggiuntivi.
+      begin // La spline √® stata creata senza i punti aggiuntivi.
         Result.Free;
         Result := nil;
         fUnableToReadAll := True;
@@ -821,7 +821,7 @@ begin
         if fSetLayers then
          with fCADCmp2D.Layers[fLayerList.Count] do
           begin
-            Pen.Color := Colors[Abs(Round(Entry[62]))];
+            Pen.Color := Colors[Abs(Round( Float(Entry[62]) ))];
             Brush.Style := bsClear;
             Active := Entry[62] >= 0;
             Name := Entry[2];
@@ -1288,7 +1288,7 @@ initialization
   Colors[253] := RGB(137, 137, 137);
   Colors[254] := RGB(183, 183, 183);
   Colors[255] := RGB(179, 179, 179);
-  // Altre tonalit‡
+  // Altre tonalit√†
   for Cont := 1 to 4 do
    begin
      Colors[Cont * 10] := RGB(255, ColArray1[Cont], 0);
