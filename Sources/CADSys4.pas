@@ -497,6 +497,8 @@
 }
 Unit CADSys4;
 
+{$mode delphi}
+
 Interface
 
 uses SysUtils, Classes, LCLType, Graphics, Controls, ClipBrd, ComCtrls,
@@ -5475,7 +5477,7 @@ type
   {: This function returns the angle in degree that
      corresponds to <I=A> in angles.
 
-     The resulting angle is in the range <I=0-360∞>.
+     The resulting angle is in the range <I=0-360¬∞>.
   }
   function RadToDeg(const A: TRealType): TRealType;
   function HSVToRGB(Hue, Sat, V: TRealType): TColor;
@@ -6204,7 +6206,7 @@ type
   function BoxFillingCartesian2D(const Box1, Box2: TRect2D): Word;
 
   { Drawing functions
-    Vect deve essere di tipo PVectPoints2D, Count Ë il numero di punti. }
+    Vect deve essere di tipo PVectPoints2D, Count √® il numero di punti. }
   procedure Draw2DSubSetAsPolygon(const Vect: Pointer; Count: Integer;
                                   const Cnv: TDecorativeCanvas;
                                   const Clip, Extent: TRect2D;
@@ -7264,7 +7266,7 @@ begin
 end;
 
 { Dist is valid only if the P projection lies on the line.
-  Parametri gi‡ omogeneizzati. }
+  Parametri gi√† omogeneizzati. }
 function _PointSegmentDistance2D(const P, P1, P2: TPoint2D; var Dist: TRealType): Boolean;
 var
   r, L, LQ, DX, DY: Double;
@@ -8241,7 +8243,7 @@ begin
   if fVisible then BitMask := BitMask or 1;
   if fEnabled then BitMask := BitMask or 2;
   if not fToBeSaved then
-   BitMask := BitMask or 4; // Uso il not per compatibilit‡ con le versioni precedenti.
+   BitMask := BitMask or 4; // Uso il not per compatibilit√† con le versioni precedenti.
   with Stream do
    begin
      Write(fID, SizeOf(fID));
@@ -10434,7 +10436,7 @@ begin
   StopRepaint;
   if (XScale = 0) or (YScale = 0) then Exit;
   TmpWin := fVisualWindow;
-  // Questa Ë la dimensione di un pixel in mm.
+  // Questa √® la dimensione di un pixel in mm.
   LogHeight := GetDeviceCaps(Cnv.Handle, VERTSIZE) / GetDeviceCaps(Cnv.Handle, VERTRES);
   LogWidth := GetDeviceCaps(Cnv.Handle, HORZSIZE) / GetDeviceCaps(Cnv.Handle, HORZRES);
   try
@@ -12776,7 +12778,7 @@ begin
     try
       fCurrentState := NewNext.Create(Self, Param, NewNext);
       if fCurrentState.ClassType = StartState then
-       TmpBool := fCurrentState.CanBeSuspended; // e' il primo stato a det. la sospendibilit‡
+       TmpBool := fCurrentState.CanBeSuspended; // e' il primo stato a det. la sospendibilit√†
       fCurrentState.CanBeSuspended := TmpBool;
     except
       Reset;
@@ -12847,7 +12849,7 @@ begin
     try
       fCurrentState := NewNext.Create(Self, Param, NewNext);
       if fCurrentState.ClassType = StartState then
-       TmpBool := fCurrentState.CanBeSuspended; // e' il primo stato a det. la sospendibilit‡
+       TmpBool := fCurrentState.CanBeSuspended; // e' il primo stato a det. la sospendibilit√†
       fCurrentState.CanBeSuspended := TmpBool;
     except
       Reset;

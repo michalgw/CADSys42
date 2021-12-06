@@ -39,6 +39,8 @@
 }
 unit CS4Tasks;
 
+{$mode delphi}
+
 Interface
 
 uses SysUtils, Classes, Graphics, Dialogs, Types,
@@ -2423,7 +2425,7 @@ begin
          finally
           IgnoreEvents := False;
          end;
-         // Controlla se il tasto del mouse è premuto.
+         // Controlla se il tasto del mouse Ã¨ premuto.
          if Key <> VK_SHIFT then
           begin // No allora si comporta come selezione di un solo oggetto.
             if Removed then

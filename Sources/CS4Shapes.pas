@@ -7,6 +7,8 @@
 }
 unit CS4Shapes;
 
+{$mode delphi}
+
 interface
 
 uses SysUtils, Classes, Graphics,
@@ -742,7 +744,7 @@ type
        and Points[1] the right-up corner.
 
        The <I=width> of the text is set to the width of <I=Rect1>.
-       If you don’t know the dimension of the Text on screen, set
+       If you donÂ’t know the dimension of the Text on screen, set
        the <See Property=TText2D@AutoSize> property to <B=True>.
        The first time the text will be drawed the bounding box will
        be adjusted automatically.
@@ -802,7 +804,7 @@ type
      This object is useful when you want a bitmap with world
      dimension that is scaled when you zoom in a portion of the
      drawing. For instance this can be useful for GIS
-     applications. However this object isn’t fast and sometimes
+     applications. However this object isnÂ’t fast and sometimes
      the bitmap is not drawed. Maybe the problem is the Windows
      95 bitmap support. I will add faster and reliable
      raster capability to the library as soon as I have time.
@@ -2950,7 +2952,7 @@ begin
        RowLen := RowLen + (Right + InterChar);
      if Str[Cont] = #13 then
       begin
-        // New line. L'altezza è 1.3 per via delle gambette.
+        // New line. L'altezza Ã¨ 1.3 per via delle gambette.
         MaxRowLen := MaxValue([MaxRowLen, RowLen - InterChar]);
         Result.Bottom := Result.Bottom - (InterLine + RowHeight);
         RowLen := 0.0;

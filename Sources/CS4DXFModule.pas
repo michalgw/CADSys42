@@ -14,6 +14,8 @@
 }
 unit CS4DXFModule;
 
+{$mode delphi}
+
 Interface
 
 uses SysUtils, Classes, Graphics, ComCtrls,

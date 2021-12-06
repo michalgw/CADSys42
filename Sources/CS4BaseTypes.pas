@@ -7,6 +7,8 @@
 }
 unit CS4BaseTypes;
 
+{$mode delphi}
+
 interface
 
 uses Classes, Graphics, Types, LCLIntf;
