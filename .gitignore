@@ -1,0 +1,6 @@
+
+*.bak
+*.ppu
+*.o
+*.dcr
+*.compiled
