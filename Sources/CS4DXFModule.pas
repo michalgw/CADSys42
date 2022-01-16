@@ -144,7 +144,8 @@ type
     procedure WriteFrame2D(Frm: TFrame2D);
     procedure WriteCurve2D(Curve: TCurve2D);
     procedure WriteOutline2D(Poly: TOutline2D);
-    procedure WriteText2D(Text: TJustifiedVectText2D);
+    procedure WriteJVText2D(Text: TJustifiedVectText2D);
+    procedure WriteText2D(Text: TText2D);
     procedure WriteBlock(Block: TBlock2D);
     procedure WriteEntity(Obj: TObject2D);
   public
@@ -1119,7 +1120,7 @@ begin
    end;
 end;
 
-procedure TDXF2DExport.WriteText2D(Text: TJustifiedVectText2D);
+procedure TDXF2DExport.WriteJVText2D(Text: TJustifiedVectText2D);
 var
   TmpPnt, TmpPnt1: TPoint2D;
   InsPnt: TPoint2D;
@@ -1158,6 +1159,19 @@ begin
   end;
 end;
 
+procedure TDXF2DExport.WriteText2D(Text: TText2D);
+begin
+  with FDXFWrite, Text do
+   begin
+     WriteGroup(1, Text);
+     WriteGroup(40, Height);
+     WriteGroup(10, Points[0].X);
+     WriteGroup(20, Points[0].Y);
+     WriteGroup(30, 0);
+     WriteGroup(50, 0);
+     WriteGroup(72, 0);
+  end;
+end;
 procedure TDXF2DExport.WriteCurve2D(Curve: TCurve2D);
 var
   Count: Integer;
@@ -1219,12 +1233,17 @@ begin
      WriteGroup(10, ModelTransform[3,1]);
      WriteGroup(20, ModelTransform[3,2]);
      WriteGroup(30, 0);
-     WriteGroup(41, ModelTransform[1,1]);
-     WriteGroup(42, ModelTransform[2,2]);
+     WriteGroup(41, sqrt( sqr(ModelTransform[1,1]) + sqr(ModelTransform[1,2]) ));
+     WriteGroup(42, sqrt( sqr(ModelTransform[2,1]) + sqr(ModelTransform[2,2]) ));
+     WriteGroup(50, radtodeg(ArcTan2(ModelTransform[1,2], ModelTransform[1,1])) );
    end;
 end;
 
 procedure TDXF2DExport.WriteEntity(Obj: TObject2D);
+var
+  sb: TSourceBlock2D;
+  tmpIter: TGraphicObjIterator;
+  tmpObj: TObject2D;
 begin
   with FDXFWrite do
    if Obj is TLine2D then
@@ -1255,13 +1274,44 @@ begin
     begin
       WriteGroup(0, 'TEXT');
       WriteGroup(8, FCADCmp2D.Layers[Obj.Layer].Name);
-      WriteText2D(Obj as TJustifiedVectText2D);
+      WriteJVText2D(Obj as TJustifiedVectText2D);
     end
    else if Obj is TBlock2D then
     begin
       WriteGroup(0, 'INSERT');
       WriteGroup(8, FCADCmp2D.Layers[Obj.Layer].Name);
       WriteBlock(Obj as TBlock2D);
+    end
+   else if Obj is TSourceBlock2D then
+     begin
+       sb:=TSourceBlock2D(obj);
+       WriteGroup(0, 'BLOCK');
+       WriteGroup(8,  FCADCmp2D.Layers[Obj.Layer].Name);
+       WriteGroup(62, 0);
+       WriteGroup(2, format('%s',[sb.Name]));
+       WriteGroup(70, 0);
+       WriteGroup(10, 0.0);
+       WriteGroup(20, 0.0);
+       WriteGroup(30, 0.0);
+       WriteGroup(3, format('%s',[sb.Name]));
+       WriteGroup(1, '');
+       tmpiter:=sb.Objects.GetIterator;
+       try
+         tmpobj:=TmpIter.First as TObject2D;
+         while tmpobj<> nil do begin
+           WriteEntity(tmpobj);
+           tmpobj:= tmpiter.Next as TObject2D;
+         end;
+       finally
+         tmpiter.Free;
+       end;
+       WriteGroup(0, 'ENDBLK');
+     end
+   else if Obj is TText2D then
+    begin
+      WriteGroup(0, 'TEXT');
+      WriteGroup(8, FCADCmp2D.Layers[Obj.Layer].Name);
+      WriteText2D(Obj as TText2D);
     end;
 end;
 
