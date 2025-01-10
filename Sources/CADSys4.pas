@@ -270,6 +270,7 @@
   <See Type=TOnChangePointsSet><BR>
   <See Type=TAddObjectEvent><BR>
   <See Type=TBadVersionEvent><BR>
+  <See Type=TBadVersionExEvent><BR>
   <See Type=TOnLoadProgress><BR>
   <See Type=TOnSaveProgress><BR>
   <See Type=TMouseEvent2D><BR>
@@ -501,7 +502,7 @@ Unit CADSys4;
 
 Interface
 
-uses SysUtils, Classes, LCLType, Graphics, Controls, ClipBrd, ComCtrls,
+uses Math, SysUtils, Classes, LCLType, Graphics, Controls, ClipBrd, ComCtrls,
   CS4BaseTypes, LMessages, LCLIntf;
 
 type
@@ -510,7 +511,7 @@ type
    if you are defining new shapes classes and want to make them
    version indipendent.
 
-   At the moment the version of the library is 'CAD422'.
+   At the moment the version of the library is 'CAD423'.
 }
   TCADVersion = array[1..6] of Char;
 {: This type define the general type for source block names.
@@ -647,7 +648,7 @@ type
    in a <See Class=TCADCmp> instance.
 
    <B=Note> that this exception is not raised when an old drawing
-    file is loaded, in which case a <See Class=TBadVersionEvent> is fired.
+    file is loaded, in which case a <See Class=TBadVersionEvent> and <See Class=TBadVersionExEvent> is fired.
 }
   ECADFileNotValid = class(ECADSysException);
 {: This exception is raised when a specified object is not found
@@ -673,6 +674,9 @@ type
   TCADViewport = class;
   TCADViewport2D = class;
   TObject2D = class;
+  TCADCmp3D = class;
+  TCADViewport3D = class;
+  TObject3D = class;
   TGraphicObjList = class;
   TGraphicObject = class;
 
@@ -699,6 +703,7 @@ type
    <I=Stream> is the stream opened for the file and <I=Version> is the
    version of the library that created the file.
    <I=StreamType> is the type of stream to read.
+   <I=Version> is the version read from stream, may be changed.
    <I=Resume> is a flag that force the library to continue to
    loading of the drawing. If this is set to True, the normal
    loading procedure will start at the exit of the event. At
@@ -709,6 +714,7 @@ type
    necessary operation to handle the file.
 }
   TBadVersionEvent = procedure(Sender: TObject; const StreamType: TStreamType; const Stream: TStream; var Resume: Boolean) of object;
+  TBadVersionExEvent = procedure(Sender: TObject; const StreamType: TStreamType; const Stream: TStream; var Version: TCADVersion; var Resume: Boolean) of object;
 {: This type defines the event that is fired when an object is loaded from
    a drawing.
 
@@ -748,6 +754,25 @@ type
    the Windows screen coordinate system.
 }
   TMouseMoveEvent2D = procedure(Sender: TObject; Shift: TShiftState; WX, WY: TRealType; X, Y: Integer) of Object;
+{: This is the type of the event handler for the mouse button events.
+
+   <I=Sender> is the component that has raised the event, <I=Button>
+   is the mouse button that has caused the event, <I=Shift> was
+   the key configuration when the event was raised.
+   <I=WX>, <I=WY> and <I=WZ> are the X, Y and Z mouse coordinates in
+   the world coordinate system ans X, Y are the X and Y mouse coordinates in
+   the Windows screen coordinate system.
+}
+  TMouseEvent3D = procedure(Sender: TObject; Button: TMouseButton; Shift: TShiftState; WX, WY, WZ: TRealType; X, Y: Integer) of Object;
+{: This is the type of the event handler for the mouse move event.
+
+   <I=Sender> is the component that has raised the event, <I=Shift> was
+   the key configuration when the event was raised.
+   <I=WX>, <I=WY> and <I=WZ> are the X, Y and Z mouse coordinates in the world
+   coordinate system ans X, Y are the X and Y mouse coordinates in
+   the Windows screen coordinate system.
+}
+  TMouseMoveEvent3D = procedure(Sender: TObject; Shift: TShiftState; WX, WY, WZ: TRealType; X, Y: Integer) of Object;
 
 {: This class defines a set of points that can be drawed as
    a polyline or filled polygon.
@@ -814,7 +839,7 @@ type
             point in the set (this happens when <See Method=TPointsSet2D@Delete> is
             called).>
     }
-    procedure Put(PutIndex, ItemIndex: Word; const Item: TPoint2D); virtual;
+    procedure Put(PutIndex, {%H-}ItemIndex: Word; const Item: TPoint2D); virtual;
   public
     {: This method create a new instance of the class setting its capacity
        to <I=_Capacity>.
@@ -890,6 +915,7 @@ type
        exception will be raised if you try to do so.
     }
     procedure AddPoints(const Items: array of TPoint2D);
+    procedure AddPoints(const SourceSet: TPointsSet2D); overload;
     {: Transform all the points in the set which a transformation matrix.
 
        <I=T> is the transformation matrix that may be created
@@ -1122,6 +1148,337 @@ type
     property OnChange: TOnChangePointsSet read fOnChange write fOnChange;
   end;
 
+{: This class defines a set of points that can be drawed as
+   a polyline (no filling is possible in 3D output of the library).
+
+   The points in the set are single precision points (<See Class=TPoint3D>)
+   that are clipped against a 3D normalized view volume in homegeneous
+   coordinates. This rect is an axis aligned box from X:-1 to 1,
+   Y:-1 to 1, Z:-1 to 0.
+
+   The class has also picking capabilities as well as a method
+   to apply a trasform matrix to all the points.
+
+   The may let the vector to grow when new points are added it; also
+   the vector can call a user defined function whenever this occour.
+
+   This class is very useful in defining new shapes to be used with
+   the library (see also <See Class=TPrimitive3D>, <See Class=TPlanarPrimitive3D>,
+   <See Class=TPlanarCurve3D>).
+}
+  TPointsSet3D = class(TObject)
+  private
+    fPoints: Pointer;
+    fCapacity, fCount: Word;
+    fGrownEnabled, fDisableEvents: Boolean;
+    fTag: Integer;
+    fOnChange: TOnChangePointsSet;
+
+    procedure CallOnChange;
+    function  GetExtension: TRect3D;
+    procedure PutProp(Index: Word; const Item: TPoint3D);
+    procedure Expand(const NewCapacity: Integer);
+  protected
+    {: This method is called whenever a point is requested from the set.
+
+       <I=Index> is the index of the point to be extracted (the set
+       is like an array so the inserted points are referred to by a
+       numeric index value from 0 to Count - 1).
+
+       The method must return a point or raise a <See Class=ECADOutOfBound>
+       exception.
+    }
+    function  Get(Index: Word): TPoint3D; virtual;
+    {: This method is called whenever a point in the set is to be replaced.
+
+       <I=PutIndex> is the index of point where to store
+       <I=Item>; <I=ItemIndex> is the index of <I=Item> if
+       it is already present in the list (so it will be replaced by
+       <I=Item>); <I=Item> is the modified point.
+
+       <B=Note>: You may want to redefine this method if you want
+       to customize the set by adding new informations to all the
+       points. For instance if you want to add a type specifier to
+       all the points you have to override this method and use the
+       specified indexes to manage the extra infos. For these
+       remember that:
+
+       <LI=<I=PutIndex> is equal to <I=ItemIndex> if
+            a point is being replaced with a new one.>
+       <LI=<I=ItemIndex>=<I=PutIndex> - 1 if the point
+            at <I=PutIndex> is being replaced with the previous
+            point in the set (this happens when <See Method=TPointsSet3D@Insert> is
+            called)>
+       <LI=<I=ItemIndex>=<I=PutIndex> + 1 if the point
+            at <I=PutIndex> is being replaced with the next
+            point in the set (this happens when <See Method=TPointsSet3D@Delete> is
+            called).>
+    }
+    procedure Put(PutIndex, {%H-}ItemIndex: Word; const Item: TPoint3D); virtual;
+  public
+    {: This method create a new instance of the class setting its size
+       to <I=_Capacity>.
+
+       <I=_Capacity> is the initial number of points that can be stored
+       in the set. If <See Property=TPointsSet3D@GrowingEnabled> is <B=True>
+       you can add more that <I=_Capacity> points to the set, otherwise
+       a <See Class=ECADOutOfBound> exception will be raised if
+       you try to do so.
+
+       Setting <I=_Capacity> to the real number of points in the set
+       will speed up the insertion of the point in the set.
+    }
+    constructor Create(const _Capacity: Word); virtual;
+    {: Free the memory used by the instance of the class.
+
+       Remember to call the <I=Free> method of the class when done
+       with the class or memory leak will result.
+    }
+    destructor Destroy; override;
+    {: Clear the set.
+
+       <B=Note> that the memory used by the set is not freed for
+       optimization. Only the <See Property=TPointsSet3D@Count> is reset to zero.
+    }
+    procedure Clear;
+    {: Copy a subset of the points from another set. The
+       points are copied in the respective positions, so
+       the second point of S is copied on the second point
+       of Self.
+
+       <I=S> is the source set from which the points will be
+       copied; <I=StIdx> and <I=EndIdx> are the start and end
+       index of the points in <I=S> to be copied respectively.
+
+       After the copy the <See Property=TPointsSet3D@OnChange> event will
+       be fired.
+
+       <B=Note>: If <See Property=TPointsSet3D@GrowingEnabled> is
+       <B=True> the size of the vector may grow if there is no
+       space for the points, otherwise only the points that sit into
+       the vect are copied and a <See Class=ECADOutOfBound>
+       exception will be raised if you try to do so.
+    }
+    procedure Copy(const S: TPointsSet3D; const StIdx, EndIdx: Integer);
+    {: Add an item at the end of the set.
+
+       <I=Item> is the point to be added. The point is added
+       after any other point.
+
+       After the copy the <See Property=TPointsSet3D@OnChange> event will
+       be fired.
+
+       <B=Note>: If <See Property=TPointsSet3D@GrowingEnabled> is
+       <B=True> the size of the vector may grow if there is no
+       space for the point, otherwise a <See Class=ECADOutOfBound>
+       exception will be raised if you try to do so.
+    }
+    procedure Add(const Item: TPoint3D);
+    {: Add all the points of a set to the current one.
+
+       <I=Items> is the set from which copy the points. The
+       points will be added in the same order the have in <I=Items>
+       at the end of the current set.
+
+       After the copy the <See Property=TPointsSet3D@OnChange> event will
+       be fired.
+
+       <B=Note>: If <See Property=TPointsSet3D@GrowingEnabled> is
+       <B=True> the size of the vector may grow if there is no
+       space for the points, otherwise only the points that sit into
+       the vect are copied and a <See Class=ECADOutOfBound>
+       exception will be raised if you try to do so.
+    }
+    procedure AddPoints(const Items: array of TPoint3D);
+    procedure AddPoints(const SourceSet: TPointsSet3D); overload;
+    {: Transform all the points in the set with a transform matrix.
+
+       <I=T> is the transformation matrix that may be created
+       whith the functions <See Function=Translate3D>,
+       <See Function=Rotate3DX>, <See Function=Rotate3DY>,
+       <See Function=Rotate3DZ>, <See Function=Scale3D>,
+       <See Function=MultiplyTransform3D>,
+       <See Function=InvertTransform3D>.
+
+       After the copy the <See Property=TPointsSet3D@OnChange> event will
+       be fired.
+    }
+    procedure TransformPoints(const T: TTransf3D);
+    {: Remove a point from the set.
+
+       <I=Index> is the index value of the point to be removed.
+       After the copy the <See Property=TPointsSet3D@OnChange> event will
+       be fired.
+
+       <B=Note 1>: Removing a point from a set is a time consuming
+       operation (or better it may be so if the set is a very large
+       one).
+
+       <B=Note 2>: If the <I=Index> is not in the vector a
+       <See Class=ECADOutOfBound> exception will be raised.
+    }
+    procedure Delete(const Index: Word);
+    {: Insert a point into the set.
+
+       <I=Index> is the index value at which the point will be
+       inserted. All the points in the set from the one at
+       <I=Index> position will be moved by one position to make
+       space for the new point. <I=Item> is the new point to be
+       inserted.
+
+       <B=Note 1>: Insert a point into a set is a time consuming
+       operation (or better it may be so if the set is a very large
+       one).
+
+       <B=Note 2>: If <See Property=TPointsSet3D@GrowingEnabled> is
+       <B=True> the size of the vector may grow if there is no
+       space for the point, otherwise a <See Class=ECADOutOfBound>
+       exception will be raised if you try to do so.
+    }
+    procedure Insert(const Index: Word; const Item: TPoint3D);
+    {: Draw the entire set of the points in the set onto a Canvas
+       as a polyline.
+
+       <I=Cnv> is the destination canvas on which the set will
+       be drawed <See Class=TDecorativeCanvas@TDecorativeCanvas>; <I=Extent> is the extension of the set as
+       returned from <See Property=TPointsSet3D@Extension>;
+       <I=NT> is the normalizing transform of the view as
+       returned by <See Property=TCADViewport3D@ViewNormalization> or
+       by the functions <See Function=ParallelViewNormalization3D>,
+       <See Function=PerspectiveViewNormalization3D> and must include
+       the orientation trasform and the normalization transform.
+       <I=VT> is the mapping transform from the normalized view rect
+       to the Canvas rect as returned by
+       <See Property=TCADViewport3D@ViewMapping>.
+
+       The set will be drawed as a polyline (not closed by the
+       method) with the outline drawed with the current pen of
+       the canvas and not filled.
+
+       <B=Note 1>: The clipping is perfomed in homogeneous
+       coordinates.
+    }
+    procedure DrawAsPolyline(const Cnv: TDecorativeCanvas; const Extent: TRect3D; const NT: TTransf3D; const VT: TTransf2D);
+    {: Draw a subset of the points in the set onto a Canvas as a polyline.
+
+       <I=Cnv> is the destination canvas on which the set will
+       be drawed <See Class=TDecorativeCanvas@TDecorativeCanvas>; <I=Extent> is the extension of the set as
+       returned from <See Property=TPointsSet3D@Extension>;
+       <I=NT> is the normalizing transform of the view as
+       returned by <See Property=TCADViewport3D@ViewNormalization> or
+       by the functions <See Function=ParallelViewNormalization3D>,
+       <See Function=PerspectiveViewNormalization3D> and must include
+       the orientation trasform and the normalization transform.
+       <I=VT> is the mapping transform from the normalized view rect
+       to the Canvas rect as returned by
+       <See Property=TCADViewport3D@ViewMapping>.
+       <I=StartIdx> is the index of first point of the set to be
+       drawed; <I=EndIdx> is the index of last point of the
+       set to be drawed. <I=EndIdx> must be greater than
+       <I=StartIdx>.
+
+       The set will be drawed as a polyline (not closed by the
+       method) from the point at <I=StartIdx> and the last
+       point at <I=EndIdx>, with the outline drawed with
+       the current pen of the canvas and not filled.
+
+       <B=Note 1>: The clipping is perfomed in homogeneous
+       coordinates.
+    }
+    procedure DrawSubSetAsPolyline(const Cnv: TDecorativeCanvas; const Extent: TRect3D; const NT: TTransf3D; const VT: TTransf2D; const StartIdx, EndIdx: Integer; const ToBeClosed: Boolean);
+    {: Change the orientation of the polyline.
+
+       This method is useful only when the set of points
+       rapresent a planar polyline (or it is a good aproximation
+       of a planar polyline).
+       The normal of the surface defined by the polyline is
+       set to <I=N> and the order of the points is updated to
+       be consistent with this normal.
+       This order is specified by value returned by <See Function=GetHandleRuleForNormals>
+       that can be set with <See Function=SetHandleRuleForNormals>
+       (by default its value is hrRightHand).
+    }
+    procedure FrontFace(const N: TVector3D);
+    {: This property contains the extension of the set, that is
+       the smaller axis-alligned rectangle that fully contains the
+       points in the set.
+
+       <B=Note>: Because this method compute the extension every
+       time it is called you may want to store it in a temporary
+       variable if you want to use it in different part of your
+       function (obviously if you don't change the set between
+       uses of the extension).
+    }
+    property Extension: TRect3D read GetExtension;
+    {: This property contains the points in the set in an array-like
+       mode.
+
+       <I=Index> is the index of the point to be accessed and it
+       is zero-based (that is the points in the set have
+       indexes 0,1,2,...).
+
+       <B=Note 1>: This is a default property so you can drop the
+       name of the property, for instance you may use:
+
+       <Code=AVect[2]>
+
+       instead of:
+
+       <Code=AVect.Points[2]>
+
+       <B=Note 2>: If <I=Index> is greater than
+       <See Property=TPointsSet3D@Count> a <See Class=ECADOutOfBound> exception
+       will be raised.
+    }
+    property Points[Index: Word]: TPoint3D read Get write PutProp; default;
+    {: This property contains the number of points in the set.
+
+       You may use this property to iterate the points in the set.
+
+       <B=Note>: This property is always less than <See Property=TPointsSet3D@Capacity>.
+    }
+    property Count: Word read fCount;
+    {: This property contains the maximun number of points
+       that can be added or inserted into the set without growing
+       it (if possible).
+    }
+    property Capacity: Word read fCapacity;
+    {: If this property is set to <B=True> then the
+       <See Property=TPointsSet3D@OnChange> event will not be fired when
+       the set change.
+    }
+    property DisableEvents: Boolean read fDisableEvents write fDisableEvents;
+    {: If this property is set to <B=True> then the set can grow
+       if you add points when <See Property=TPointsSet3D@Count> is equal to
+       <See Property=TPointsSet3D@Capacity>, otherwise a <See Class=ECADOutOfBound>
+       exception will be raised if you try to do so.
+    }
+    property GrowingEnabled: Boolean read fGrownEnabled write fGrownEnabled;
+    {: This property contains the points reference, that is a pointer
+       to the underling set of points. You will need to use it in the
+       functions:
+       <See Function=GetVectNormal>
+       <See Function=IsPointOnPolyLine3D>
+       <See Function=Draw3DSubSetAsPolyline>
+    }
+    property PointsReference: Pointer read fPoints;
+    {: The Tag property for user's information.
+
+       It is not saved.
+    }
+    property Tag: Integer read fTag write fTag;
+    {: EVENTS}
+    {: This event is fired whenever the set is changed.
+
+       In the <I=Sender> argument of the event handler the changed
+       set is passed.
+
+       <B=Note>: If you change the vector in the event handler no
+       new event will be fired.
+    }
+    property OnChange: TOnChangePointsSet read FOnChange write FOnChange;
+  end;
+
 {: This type defines the procedure used by a <See Class=TCADViewport>
    controll to clear the canvas before drawing on it.
 
@@ -1247,7 +1604,7 @@ type
    Also you don't need to know if your drawing is to be saved in a
    file, in a memory stream or also into a database record.
 }
-    constructor CreateFromStream(const Stream: TStream; const Version: TCADVersion); virtual;
+    constructor CreateFromStream(const Stream: TStream; const {%H-}Version: TCADVersion); virtual;
 {: This method save an image of the current state of the object to a stream.
 
    <I=Stream> is the stream on which save the image.
@@ -1292,7 +1649,7 @@ type
 
    This method fires a <See Property=TGraphicObject@OnChange> event.
 }
-    procedure UpdateExtension(Sender: TObject);
+    procedure UpdateExtension({%H-}Sender: TObject);
 {: This property defines the ID of the object.
 
    Any graphic object is identified through th library by means of a
@@ -1480,8 +1837,8 @@ type
     function GetCurrentObject: TGraphicObject;
     function SearchBlock(ID: LongInt): Pointer;
     function GetCount: Integer;
-    constructor Create(const Lst: TGraphicObjList); virtual;
   public
+    constructor Create(const Lst: TGraphicObjList); virtual;
 {: This is the descructor of the iterator.
 
    When an iterator is freed (with the use of <I=Free>) the iterator's
@@ -1591,9 +1948,8 @@ type
    <See Method=TGraphicObjList@GetPrivilegedIterator>.
 }
   TExclusiveGraphicObjIterator = class(TGraphicObjIterator)
-  private
-    constructor Create(const Lst: TGraphicObjList); override;
   public
+    constructor Create(const Lst: TGraphicObjList); override;
     destructor Destroy; override;
 {: This method delete the current object from the source list.
    After the object is deleted the current position in the list
@@ -1909,7 +2265,7 @@ type
     procedure SetName(Nm: TLayerName);
     procedure SetPen(Pn: TPen);
     procedure SetBrush(Br: TBrush);
-    procedure Changed(Sender: TObject);
+    procedure Changed({%H-}Sender: TObject);
   public
 {: This is the constructor of the layer.
 
@@ -2116,6 +2472,7 @@ type
     { event handlers. }
     fOnAddObject: TAddObjectEvent;
     fOnVerError: TBadVersionEvent;
+    fOnVerErrorEx: TBadVersionExEvent;
     fOnLoadProgress: TOnLoadProgress;
     fOnSaveProgress: TOnSaveProgress;
 
@@ -2242,7 +2599,7 @@ type
 
        See also <See Method=TCADCmp@GetSourceBlock>.
     }
-    function  FindSourceBlock(const SrcName: TSourceBlockName): TGraphicObject;
+    function  FindSourceBlock(const {%H-}SrcName: TSourceBlockName): TGraphicObject;
     {: This method returns the source block with the given ID or
        <B=nil> if no such object is found.
 
@@ -2727,9 +3084,10 @@ type
        called when a drawing created with an older version
        of the library is loaded.
 
-       See also <See Type=TBadVersionEvent>.
+       See also <See Type=TBadVersionEvent>, <See Type=TBadVersionExEvent>, .
     }
     property OnInvalidFileVersion: TBadVersionEvent read fOnVerError write fOnVerError;
+    property OnInvalidFileVersionEx: TBadVersionExEvent read fOnVerErrorEx write fOnVerErrorEx;
   end;
 
   {: This class defines a viewport with which it is possible to render
@@ -2829,7 +3187,7 @@ type
     procedure SetGridColor(const Cl: TColor);
     procedure SetShowGrid(const B: Boolean);
     procedure SetOnClearCanvas(const H: TClearCanvas);
-    procedure ClearCanvas(Sender: TObject; Cnv: TCanvas; const ARect: TRect2D; const BackCol: TColor);
+    procedure ClearCanvas({%H-}Sender: TObject; Cnv: TCanvas; const ARect: TRect2D; const BackCol: TColor);
     procedure DoCopyCanvas(const GenEvent: Boolean);
     procedure DoCopyCanvasThreadSafe;
     procedure CalibrateCnv(const Cnv: TCanvas; XScale, YScale: TRealType);
@@ -2864,7 +3222,7 @@ type
 
        See also <See Property=TCADViewport@UsePaintingThread>.
     }
-    procedure OnThreadEnded(Sender: TObject); dynamic;
+    procedure OnThreadEnded({%H-}Sender: TObject); dynamic;
     {: This method copies the backbuffer image on the canvas of the control.
 
        <I=Rect> is the rectangle of the backbuffer to be copied on the same
@@ -2926,7 +3284,7 @@ type
        <B=Note>: You may want to use the <See function=GetVisualTransform2D> function
        to obtain the mapping transform.
     }
-    function  BuildViewportTransform(var ViewWin: TRect2D; const ScreenWin: TRect; const AspectRatio: TRealType): TTransf2D; virtual;
+    function  BuildViewportTransform(var {%H-}ViewWin: TRect2D; const {%H-}ScreenWin: TRect; const {%H-}AspectRatio: TRealType): TTransf2D; virtual;
     {: This method draws a 2D rectangular grid on the viewport.
 
        <I=ARect> is the portion of the window plane that is currently viewed in
@@ -2994,7 +3352,7 @@ type
        portion and <I=Cnv> is the destination canvas. <I=CopyMode> specify the
        type of the copy (see <See Type=TCanvasCopyMode>).
     }
-    function  GetCopyRectViewportToScreen(CADRect: TRect2D; const CanvasRect: TRect; const Mode: TCanvasCopyMode): TTransf2D; virtual;
+    function  GetCopyRectViewportToScreen({%H-}CADRect: TRect2D; const {%H-}CanvasRect: TRect; const {%H-}Mode: TCanvasCopyMode): TTransf2D; virtual;
     {: This method returns the mapping transform matrix that maps the
        visual rect portion of the view plane in the client area of the
        control.
@@ -4001,7 +4359,7 @@ type
        of the object is contained (also partially) in the <I=Clip>
        rectangle.
     }
-    function  IsVisible(const Clip: TRect2D; const DrawMode: Integer): Boolean; virtual;
+    function  IsVisible(const Clip: TRect2D; const {%H-}DrawMode: Integer): Boolean; virtual;
     {: This method draws only the control points of the object.
 
        An 2D object may have a set of points that are called
@@ -4660,6 +5018,1430 @@ type
     property OnMouseUp2D: TMouseEvent2D read FOnMouseUp2D write FOnMouseUp2D;
   end;
 
+  { Questa classe definisce un'ogetto che può essere utilizzato per estendere
+    le modalità di manipolazione di un oggetto 2D. I metodi DrawControlPoints
+    e OnMe di questo oggetto sono chiamati rispettivamente per visualizzare e
+    restituire informazioni di picking in modo differente. Per esempio è possibile
+    definire degli handlers specifici per spostare l'oggetto, per ruotarlo e via
+    dicendo. In un qualsiasi momento è possibile cambiare l'handler attivo in
+    modo da poter avere diverse modalità di gestione dell'oggetto.
+    E' una classe astratta. }
+  TObject3DHandler = class(TObject)
+  private
+    fHandledObject: TObject3D;
+    fRefCount: Integer;
+  public
+    constructor Create(AObject: TObject3D);
+    destructor  Destroy; override;
+    procedure FreeInstance; override;
+
+    procedure DrawControlPoints(const Sender: TObject3D; const NormTransf: TTransf3D; const VRP: TPoint3D; const VT: TTransf2D; const Cnv: TDecorativeCanvas; const Width: Integer); dynamic; abstract;
+    function  OnMe(const Sender: TObject3D; P: TPoint3D; const NormTransf: TTransf3D; Aperture: TRealType; var Distance: TRealType): Integer; dynamic; abstract;
+
+    property HandledObject: TObject3D read fHandledObject;
+  end;
+
+  TObject3DHandlerClass = class of TObject3DHandler;
+  
+   {: A <I=3D graphic object> is a graphic object that is defined in
+     a 3D world.
+
+     The 3D object is defined in a special coordinate system referred
+     here as the <I=model coordinate system or model system>. When an object
+     is used by the library, the <I=world coordinate system (or world system)>
+     are needed instead. So the object in model system is transformed
+     by a transform matrix to obtain the object in the world system.
+     This transform is called the <See Property=TObject3D@ModelTransform>.
+     So when an object is drawed, for example, its points are first
+     transformed from model system to world system by using this matrix,
+     then the points are projected on the view plane and normalized
+     (see <See Class=TCADViewport3D> for details),
+     and finally they are mapped to the screen system and displayed
+     (by using clipping in homogeneous coordinates).
+
+     The 3D object has a 3D bounding box, that is the smallest
+     axis aligned box that fully contains the object.
+     This box is always in the world coordinate system and
+     so it doesn't depend on the model transform. The bounding box
+     must be computed in the
+     <See Property=TGraphicObject@_UpdateExtension> method that have
+     to be redefined.
+
+     The model matrix is split in two parts. The first one, called
+     the <I=current model matrix>, can be removed at any time or
+     can be post multiplied with a new one.
+
+     The second one, called the <I=saved model matrix>, is stored
+     permanently inside the object and can only be removed
+     by using the <See Method=TObject3D@RemoveTransform> method
+     or substituted with the actual model matrix with the
+     <See Method=TObject3D@ApplyTransform> method.
+     The actual model matrix is the concatenation of the
+     <I=saved model matrix> with the <I=current model matrix> in
+     this order (remember that the order of concatenation of transform matrix
+     is important).
+
+     The presence of the <I=current model matrix> is helpfull to
+     create operations that transform an object interactilvely and
+     that can be cancelled if they are not what the user want to do.
+
+     <B=Note>: To save space the <I=current model matrix> and the
+     <I=saved model matrix> are stored in the object only if they
+     are not equal to the <See const=IdentityTransf3D> constant.
+  }
+ TObject3D = class(TGraphicObject)
+  private
+    fSavedTransform, fModelTransform: ^TTransf3D;
+    fDrawBoundingBox: Boolean;
+    fBox: TRect3D;
+    fHandler: TObject3DHandler;
+
+    { Non modifica ModelTransform. }
+    procedure SaveTransform(const T: TTransf3D);
+  protected
+    {: This method returns the <I=actual model matrix>.
+
+       The actual model matrix is the concatenation of the
+       <I=saved model matrix> with the <I=current model matrix> in
+       this order (remember that the order of concatenation of transform matrix
+       is important).
+
+       See the <See Class=TObject3D> for details.
+    }
+    function GetModelTransform: TTransf3D; virtual;
+    {: This method change the <I=current model matrix> of the object.
+
+       The method calls the <See Method=TGraphicObject@UpdateExtension> method
+       to update the bounding box of the object.
+       <I=Transf> is the ransform matrix that substituite the
+       <I=current model matrix>.
+
+       See the <See Class=TObject3D> for details about the model matrix
+       of a 3D object.
+    }
+    procedure SetModelTransform(Transf: TTransf3D); virtual;
+    {: This field contains the bounding box of the object.
+
+       A bounding box is the smallest axis aligned box that
+       fully contains the object.
+       This box is always in the world coordinate system and
+       so it doesn't depend on the model transform. The bounding box
+       must be computed in the
+       <See Property=TGraphicObject@_UpdateExtension> method that have
+       to be redefined.
+
+       Use this field directly to assign the computed bunding box.
+    }
+    property WritableBox: TRect3D read fBox write fBox;
+  public
+    constructor Create(ID: LongInt);
+    destructor Destroy; override;
+    constructor CreateFromStream(const Stream: TStream; const Version: TCADVersion); override;
+    procedure SaveToStream(const Stream: TStream); override;
+    { Ritorna la descrizione a faccie dell'oggetto. FacePts deve essere già creato e viene cancellato dalla funzione.
+      I indica l'indice della faccia. Ritorna False se non ci sono più faccie. }
+    function GetObjectFaces(var {%H-}I: Integer; {%H-}FacePts: TPointsSet3D; var {%H-}FaceNormal: TVector3D; var {%H-}FaceID: Integer): Boolean; virtual;
+    procedure Assign(const Obj: TGraphicObject); override;
+    {: This method transform the object with a give transformation matrix.
+
+       The <I=T> transform matrix will be post multiplied with the
+       <I=current model matrix> and the result will take the place of
+       the <I=current model matrix>.
+
+       See the <See Class=TObject3D> class for details about the
+       model matrix of a 3D object.
+    }
+    procedure Transform(T: TTransf3D); dynamic;
+    {: This method removes the <I=actual model transform>.
+
+       By using this method you can remove both the <I=current model matrix>
+       and the <I=saved model matrix>.
+       Using this method is the only way to remove the <I=saved model matrix>
+       and free all the memory used to store the transformation matrix.
+
+       See the <See Class=TObject3D> class for details about the
+       model matrix of a 3D object.
+    }
+    procedure RemoveTransform;
+    {: This method saves the <I=current model transform>.
+
+       The method saves the model matrix by setting the
+       <I=saved model transform> to the result of the multiplication
+       of the <I=saved model transform> with the
+       <I=current model transform> in this order.
+
+       After the call to the method the <I=current model transform> is
+       set to the <See const=IdentityTransf3D> constant.
+
+       This method is automatically called when the object is
+       streamed. The method calls
+       <See Method=TGraphicObject@UpdateExtension>.
+    }
+    procedure ApplyTransform; dynamic;
+    {: This method draws the object on a canvas.
+
+       A 3D object have to implement this method to draw itself
+       appropriately.
+
+       <I=NormTransf> is the <I=normalization transform>
+       (see <See Class=TCADViewport3D> for details>) that can be
+       obtained with the <See Property=TCADViewport3D@ViewNormalization>
+       property;
+       <I=VT> is the the mapping transform that can be obtained
+       with the <See Property=TCADViewport@ViewportToScreenTransform> property.
+       <I=Cnv> is the canvas on which draw the control points, and
+       <I=VRP> is the view reference point that is a point centered on the
+       view plane and that may be useful to implement operations such
+       as back face culling.
+
+       <I=DrawMode> is a constant that correspond to the value
+       of the <See Property=TCADViewport@DrawMode> property of
+       the CADViewport that calls this method. It may be used to
+       change the behaviour of the drawing method.
+    }
+    procedure {%H-}Draw(const NormTransf: TTransf3D; const VRP: TPoint3D; const VT: TTransf2D; const Cnv: TDecorativeCanvas; const DrawMode: Integer); virtual; abstract;
+    {: This method returns <B=True> if the object is contained
+       in the normalized view volume (see <See Class=TCADViewport3D>).
+
+       This method is used to prune the object that must not be
+       drawed to save time in the drawing process.
+
+       <I=NormalTransf> is the projection-normalization matrix
+       as given by <See Property=TCADViewport3D@ViewNormalization>.
+       <I=VRP> is the view reference point that is a point centered on the
+       view plane and that may be useful to implement operations such
+       as back face culling.
+
+       <I=DrawMode> is a constant that correspond to the value
+       of the <See Property=TCADViewport@DrawMode> property of
+       the CADViewport that calls this method. It may be used to
+       change the behaviour of the drawing method.
+
+       By default this method returns <B=True> if the bounding box
+       of the object is contained (also partially) in normalized view
+       volume.
+    }
+    function  IsVisible(const NormTransf: TTransf3D; const {%H-}VRP: TPoint3D; const {%H-}DrawMode: Integer): Boolean; virtual;
+    {: This method moves the object.
+
+       <I=DragPt> is the base point of the movement and <I=ToPt>
+       is the destination point. The <I=actual model transform> will
+       be substituited with a translation matrix from <I=DragPt> to
+       <I=ToPt>.
+    }
+    procedure MoveTo(ToPt, DragPt: TPoint3D);
+    {: This method transforms a point in world coordinate system in
+       the corrisponding point in model coordinate system.
+
+       The resulting point is the point that is transformed by
+       the <I=actual model transform> into <I=Pt>.
+    }
+    function  WorldToObject(const Pt: TPoint3D): TPoint3D;
+    {: This property contains the <I=actual model transform> of the object.
+
+       The 3D object is defined in a special coordinate system referred
+       here as the <I=model coordinate system or model system>. When an object is used by the
+       library, the world coordinate system (or world system) are
+       needed instead. So the object in model system is transformed by an
+       matrix transform to obtain the object in the world system.
+       This transform is called the <See Property=TObject2D@ModelTransform>.
+       So when an object is drawed, for example, its points are first
+       transformed from model system to world system by using this matrix,
+       then the view transform (that the concatenation of the
+       projection matrix with the mapping matrix) tranform these points
+       to obtain the points in the screen system that are easily displayed.
+    }
+    function  HasTransform: Boolean; virtual;
+    {: This method draws only the control points of the object.
+
+       An 3D object may have a set of points that are called
+       <I=control points> and that control the shape of the
+       object. For example a cilinder may have two control points;
+       the center of the base circle and a point on the base circle
+       that specify the radious of it.
+
+       <I=NormTransf> is the <I=normalization transform>
+       (see <See Class=TCADViewport3D> for details>) that can be
+       obtained with the <See Property=TCADViewport3D@ViewNormalization>
+       property;
+       <I=VT> is the the mapping transform that can be obtained
+       with the <See Property=TCADViewport@ViewportToScreenTransform> property.
+       <I=Cnv> is the canvas on which draw the control points, and
+       <I=Width> is the width in pixel of the control points (that are
+       drawed as a square).
+       <I=VRP> is the view reference point that is a point centered on the
+       view plane and that may be useful to implement operations such
+       as back face culling.
+    }
+    procedure DrawControlPoints(const NormTransf: TTransf3D; const VRP: TPoint3D; const VT: TTransf2D; const Cnv: TDecorativeCanvas; const Width: Integer); dynamic;
+    {: This method returns the object in the drawing that is at a distance
+       from <I=P> less than <I=Aperture>.
+
+       <I=Pt> is the picking point in normalized coordinate system,
+       <I=Aperture> is the picking aperture
+       and <I=Distance> will contains the distance from <I=Pt> to
+       the object.
+
+       <I=NormTransf> is the projection-normalization transform that
+       project points in the world coordinates system in the points
+       in the normalized view volume (that can be pojected on the
+       view plane by calling <See Function=Point3DToPoint2D>. This
+       matrix is used to transform the object's points before the
+       check against <I=P> (that is already in the normalized
+       view volume).
+
+       The method returns one of these values (ordered from the highest
+       priority to the lowest priority):
+
+       <LI=<I=PICK_NOOBJECT> if <I=Pt> is not on the object. Distance
+       will became <See const=MaxCoord>.>
+       <LI=<I=PICK_INBBOX> if <I=Pt> is inside the bounding box of the
+       object. Distance will be equal to Aperture.>
+       <LI=<I=PICK_ONOBJECT> if <I=Pt> is on the outline of the object
+       with a distance less than Aperture. Distance will be that
+       distance.>
+       <LI=<I=PICK_INOBJECT> if <I=Pt> is inside the outline of the
+       object. Distance will be set to Aperture.>
+       <LI=A value greater than or equal to zero if <I=Pt> is on any of
+       the control points, in this case the resulting value is that
+       control point. Distance will be the distance form the control
+       point.
+
+       You must use this convention in your implementations of
+       the method. (You can use the inherited method if some of these
+       condition is the same as in the base class).
+
+       <B=Note>: This method implements a 2D picking on the
+       projected points.
+    }
+    function  OnMe(P: TPoint3D; const NormTransf: TTransf3D; Aperture: TRealType; var Distance: TRealType): Integer; dynamic;
+    procedure SetSharedHandler(const Hndl: TObject3DHandler);
+    procedure SetHandler(const Hndl: TObject3DHandlerClass);
+
+    {: This property contains the <I=actual model transform> of the object.
+
+       The 2D object is defined in a special coordinate system referred
+       here as the <I=model coordinate system or model system>. When an object is used by the
+       library, the world coordinate system (or world system) are
+       needed instead. So the object in model system is transformed by an
+       matrix transform to obtain the object in the world system.
+       This transform is called the <I=ModelTransform>.
+       So when an object is drawed, for example, its points are first
+       transformed from model system to world system by using this matrix,
+       then the view transform (that the concatenation of the
+       projection matrix with the mapping matrix) tranform these points
+       to obtain the points in the screen system that are easily displayed.
+    }
+    property ModelTransform: TTransf3D read GetModelTransform write SetModelTransform;
+    {: This property contains the bounding box of the object.
+
+       The 3D object has a 3D bounding box, that is the smallest
+       axis aligned box that fully contains the object.
+       This box is always in the world coordinate system and
+       so it doesn't depend on the model transform. The bounding box
+       must be computed in the
+       <See Property=TGraphicObject@_UpdateExtension> method that have
+       to be redefined.
+    }
+    property Box: TRect3D read FBox;
+    {: If this property is <B=True> then the bounding box is drawed
+       in the <See Method=TObject3D@DrawControlPoints>.
+    }
+    property DrawBoundingBox: Boolean read fDrawBoundingBox write fDrawBoundingBox;
+    property Handler: TObject3DHandler read fHandler;
+  end;
+
+  TObject3DClass = class of TObject3D;
+
+  {: This class defines a group of 3D objects, that is a close set
+     of objects that share the same model transform.
+
+     A container has a special behaviour for the picking operation.
+     Since a container embrace a group of objects, the picking take
+     effect at group level returning the ID of the selected object
+     instead of its control point.
+
+     A container can be used to group objects that must be moved or
+     transformed as a whole. On the other hand, if you want to reuse
+     a set of objects in different place on the drawing use the
+     <See Class=TSourceBlock3D> class.
+  }
+  TContainer3D = class(TObject3D)
+  private
+    { List of objects in the container. }
+    FObjects: TGraphicObjList;
+  protected
+    procedure _UpdateExtension; override;
+  public
+    {: This is the constructor for the class.
+
+       It creates an instance of the container. This constructor needs:
+
+       <LI=the ID of the container. This identifier univocally identifies
+       the object in the CAD. See also <See Method=TCADCmp@AddObject>.>
+       <LI=the array of objects that must be added to the set. After
+       you have created the container it is possible to add and
+       remove objects throught the <See Property=TContainer3D@Objects> property.>
+
+       If you want to create a void container you have to supply an
+       array with only one item set to <B=nil> (ie <B=[nil]>).
+
+       The objects in the container are owner by the container
+       itself and will be freed when the container is deleted. So it
+       isn't possible to share objects between containers.
+    }
+    constructor Create(ID: LongInt; const Objs: array of TObject3D);
+    destructor Destroy; override;
+    constructor CreateFromStream(const Stream: TStream; const Version: TCADVersion); override;
+    procedure SaveToStream(const Stream: TStream); override;
+    procedure Assign(const Obj: TGraphicObject); override;
+    {: This method updates the references of the source blocks
+       that are used in the container.
+
+       This method is called automatically at the end of the loading
+       process from a stream. Indeed when you save a container it
+       may contains <See Class=TBlock3D> instances that references
+       to <See Class=TSourceBlock3D> instances. When the application
+       is closed these references are no longer valid, so the blocks
+       must be relinked to the corrent source blocks.
+
+       The method needs the iterator of source blocks list in order
+       to relink the blocks. This iterator can be obtained from
+       <See Property=TCADCmp@SourceBlocksIterator>.
+
+       The method call the <See Method=TGraphicObject@UpdateExtension>.
+    }
+    procedure UpdateSourceReferences(const BlockList: TGraphicObjIterator);
+    procedure Draw(const NormTransf: TTransf3D; const VRP: TPoint3D; const VT: TTransf2D; const Cnv: TDecorativeCanvas; const DrawMode: Integer); override;
+    procedure DrawControlPoints(const NormTransf: TTransf3D; const VRP: TPoint3D; const VT: TTransf2D; const Cnv: TDecorativeCanvas; const Width: Integer); override;
+    function  OnMe(P: TPoint3D; const NT: TTransf3D; Aperture: TRealType;
+                  var Distance: TRealType): Integer; override;
+
+    {: This property contains the list that contians the object in the container.
+
+       The objects in the container are owned by the container itself. Use
+       this property to manage these objects.
+    }
+    property Objects: TGraphicObjList read FObjects;
+  end;
+
+  {: This class defines a group of 3D objects that can be placed
+     in different points of the drawing. This is the efficent
+     way to compose a drawing from repeated part of it.
+
+     This class defines a template that can be instantiated,
+     and any instance has its own model transformation but share
+     the same objects of the template. The instances of this
+     template are obtained with <See Class=TBlock3D> class.
+
+     This kind of object must be added to the CAD using the
+     <See Method=TCADCmp3D@AddSourceBlock> and
+     <See Class=TCADCmp3D@BlockObjects> methods.
+  }
+  TSourceBlock3D = class(TContainer3D)
+  private
+    FNReference: Word; { Number of reference }
+    FName: TSourceBlockName;
+    fLibraryBlock: Boolean;
+  public
+    {: This is the constructor of the class.
+
+       A source block is referenced either by use of its ID or by use
+       of its name.
+       This constructor needs:
+
+       <LI=the ID of the source block. This identifier univocally
+       identify the source block in the CAD.>
+       <LI=the name of the source block. The name is of type
+       <See Type=TSourceBlockName>.>
+       <LI=the array of objects that must be added to the source
+       block. After you have created the source blocks it is possible
+       to add and remove objects afterward throught the
+       <See Property=TContainer3D@Objects> property.>
+
+       The objects in the source block are owner by the source block
+       itself and they will be freed when the source block is deleted.
+       So it isn't possible to share objects between source block, but
+       it is possible to share these objects using the <See Class=TBlock3D>
+       class.
+    }
+    constructor Create(ID: LongInt; const Name: TSourceBlockName; const Objs: array of TObject3D);
+    destructor Destroy; override;
+    constructor CreateFromStream(const Stream: TStream; const Version: TCADVersion); override;
+    procedure SaveToStream(const Stream: TStream); override;
+    procedure Assign(const Obj: TGraphicObject); override;
+
+    {: This property contains the name of the source block.
+
+       See also <See Type=TSourceBlockName>.
+    }
+    property Name: TSourceBlockName read FName write FName;
+    {: This property contains the number of instances of the
+       source block, that is the number of <See Class=TBlock3D>
+       objects that are linked to it.
+
+       When a new block is created to reference a source block,
+       this property is incremented by one. When the block is
+       deleted this numeber is decremented by one.
+
+       Only if this value is zero the source block can be deleted.
+    }
+    property NumberOfReferences: Word read FNReference;
+    {: This property tells if the source block is a library source
+       block.
+
+       A library source block is a source block that is shared among
+       differert drawings, made up a library of symbols.
+
+       When this property is <B=True>, the source block will not be
+       saved in a drawing file, but can be stored in a library file
+       by using the methods <See Method=TCADCmp@SaveLibrary>
+       and <See Method=TCADCmp@LoadLibrary>.
+
+       If this property is <B=False>, the source block will be
+       saved in the drawing file.
+
+       If <See Property=TGraphicObject@ToBeSaved> is <B=False> the
+       source block will not be saved anyway.
+    }
+    property IsLibraryBlock: Boolean read fLibraryBlock write fLibraryBlock;
+  end;
+
+  {: This class defines an instance of a <See Class=TSourceBlock3D>.
+
+     A block is an istance of a source block, namely a copy of the
+     source block that has its own model transform but share the
+     same objects that define the source block.
+
+     A block is an indipendent entity when it is concerned with
+     the model transform, but it depends on the source block for
+     its shape.
+  }
+  TBlock3D = class(TObject3D)
+  private
+    { Reference to the source block. }
+    FSourceBlock: TSourceBlock3D;
+    FSourceName: TSourceBlockName;
+    { Origin of the block. }
+    FOriginPoint: TPoint3D;
+    procedure SetSourceBlock(Source: TSourceBlock3D);
+    procedure SetOriginPoint(Pt: TPoint3D);
+  protected
+    procedure _UpdateExtension; override;
+  public
+    {: This is the constructor of the class.
+
+       <I=Source> is the source block that is used to define
+       the instance.
+    }
+    constructor Create(ID: LongInt; Source: TSourceBlock3D);
+    destructor Destroy; override;
+    constructor CreateFromStream(const Stream: TStream; const Version: TCADVersion); override;
+    procedure SaveToStream(const Stream: TStream); override;
+    procedure Assign(const Obj: TGraphicObject); override;
+    {: This method updates the references of the block.
+
+       This method is called automatically at the end of the loading
+       process of the block from a stream. Indeed when you save a
+       block the reference to the source block is no longer valid,
+       so the block must be relinked to the correct source blocks
+       instance.
+
+       The method needs the iterator of the source blocks of a CAD in
+       order to relink the block's source block. This iterator can be
+       obtained by <See Property=TCADCmp@SourceBlocksIterator>
+    }
+    procedure UpdateReference(const BlockList: TGraphicObjIterator);
+    procedure DrawControlPoints(const NormTransf: TTransf3D; const VRP: TPoint3D; const VT: TTransf2D;
+                                const Cnv: TDecorativeCanvas; const Width: Integer); override;
+    procedure Draw(const NormTransf: TTransf3D; const VRP: TPoint3D; const VT: TTransf2D; const Cnv: TDecorativeCanvas; const DrawMode: Integer); override;
+    function OnMe(P: TPoint3D; const NT: TTransf3D; Aperture: TRealType;
+                  var Distance: TRealType): Integer; override;
+
+    {: This property contains the base position of the block.
+
+       The origin point is the position of the (0, 0, 0) inside of
+       the source block that is referenced by the block.
+
+       The origin point is only a visual reference and doesn't
+       alter the model transform (but it is altered from it).
+    }
+    property OriginPoint: TPoint3D read FOriginPoint write SetOriginPoint;
+    {: This property contains the reference to the source block used by the block.
+
+       See also <See Class=TSourceBlock3D>.
+    }
+    property SourceBlock: TSourceBlock3D read FSourceBlock write SetSourceBlock;
+    {: This property contains the name of the source block
+       referenced by the block.
+
+       It is used to save the source block reference into a stream,
+       and it is used to relink the source block reference when the
+       block is loaded back.
+    }
+    property SourceName: TSourceBlockName read FSourceName;
+  end;
+
+  {: This class defines a specialization of a <See Class=TCADCmp>
+     control (see it for details).
+
+     This CADCmp handles 3D objects and source blocks.
+     This component must be used when you need to store 3D drawing.
+  }
+  TCADCmp3D = class(TCADCmp)
+  private
+    function GetExtension: TRect3D;
+  protected
+    procedure LoadObjectsFromStream(const Stream: TStream; const Version: TCADVersion); override;
+    procedure SaveObjectsToStream(const Stream: TStream); override;
+  public
+    {: This method loads the blocks definitions (see <See Class=TSourceBlock3D>) from a drawing.
+       This is an abstract method that must be implemented in a concrete control.
+
+       <I=Stream> is the stream that contains the blocks (and it must be
+       positioned on the first block present). The stream must be
+       created with the current version of the library (see also
+       <See Method=TCADCmp@LoadObjectsFromOldStream>).
+       The blocks are created by reading the shape class registration index
+       and creating the correct shape instance with the state present in the
+       stream. Then this instance is saved in the list of objects of the
+       source block.
+
+       When a source block is loaded the objects that are contained in the
+       source block are checked for recursive nesting of blocks. It is
+       allowed to have a source block that use in its definition another
+       source block, BUT this source block must be loaded before the
+       source block that use it (this is automatically checked when you
+       define a block). When the source block is loaded its
+       <See Method=TContainer3D@UpdateSourceReferences> is called to
+       update the references.
+
+       If there is a block that references to a not defined source block
+       a message will be showed and the source block will not be loaded.
+
+       See also <See=Object's Persistance@PERSISTANCE>.
+    }
+    procedure LoadBlocksFromStream(const Stream: TStream; const Version: TCADVersion); override;
+    {: This method saves the blocks definitions (see <See Class=TSourceBlock3D>) to a drawing.
+       This is an abstract method that must be implemented in a concrete control.
+
+       <I=Stream> is the stream into which save the source blocks,
+       <I=AsLibrary> tells if list of source blocks must be saved as
+       a library. A Library will contains only the source blocks that
+       have the <See Property=TGraphicObject@ToBeSaved> property set to
+       <B=True> and the <See Property=TSourceBlock3D@IsLibraryBlock>
+       property set to <B=True>. This is useful to create library of
+       blocks definition to be shared beetwen drawing.
+
+       See also <See=Object's Persistance@PERSISTANCE>.
+    }
+    procedure SaveBlocksToStream(const Stream: TStream; const AsLibrary: Boolean); override;
+    {: This method adds a new source block.
+
+       <I=ID> is the identifier number of the source block and Obj is the
+       source block object. The library doesn't check for uniqueness of
+       source block's ID. The given ID substitute the ID of Obj. A source
+       block can also be referenced by its name and again the library
+       doesn't check for its uniqueness.
+
+       A source block is a collection of objects that are drawed at a whole
+       on the viewport. A source block must be istantiated before the
+       drawing occourse by define a block that references it. The instance
+       has a position so you can share the same collection of objects and
+       draw it in different places on the same drawing. This allows the
+       efficent use of memory. If a source block is modified, all the
+       instances are modified accordingly.
+
+       See also <See Class=TSourceBlock3D> and
+       <See Class=TBlock3D>.
+    }
+    function AddSourceBlock(Obj: TSourceBlock3D): TSourceBlock3D;
+    {: This method deletes the source block with the specified ID.
+
+      <I=ID> is the identification number of the source block. If no such
+      block is found a <See Class=ECADListObjNotFound> exception will be raised.
+
+      If the source block to be delete is in use (that is it is referenced
+      by some <See Class=TBlock3D> object) a
+      <See Class=ECADSourceBlockReferenced> exception will be raised and the
+      operation aborted. In this case you must delete the objects that
+      reference the source block before retry.
+    }
+    procedure DeleteSourceBlock(const SrcName: TSourceBlockName);
+    function  GetSourceBlock(ID: LongInt): TSourceBlock3D;
+    function  FindSourceBlock(const SrcName: TSourceBlockName): TSourceBlock3D;
+    {: This method creates a source block (and add it to the CAD) by
+       grouping a list of objects.
+
+       <I=ScrName> will be the name of the source block; <I=Objs> is
+       an iterator on the list that contains the objects to be added.
+       That list must have the <See Property=TGraphicObjList@FreeOnClear>
+       property set to <B=False>.
+    }
+    function  BlockObjects(const SrcName: TSourceBlockName; const Objs: TGraphicObjIterator): TSourceBlock3D;
+    procedure DeleteLibrarySourceBlocks; override;
+    procedure DeleteSavedSourceBlocks; override;
+    function AddObject(ID: LongInt; const Obj: TObject3D): TObject3D;
+    {: This method adds a new block (instance of a source block) into
+       the CAD.
+
+       <I=ID> will be the identifier of the new block,
+       and <I=SrcName> is the name of the source block used to
+       define the block.
+
+       If the source block isn't in the CAD an exception will be
+       raised. The method returns the reference of the added block.
+    }
+    function  AddBlock(ID: LongInt; const SrcName: TSourceBlockName): TObject3D;
+    function InsertObject(ID, IDInsertPoint: LongInt; Obj: TObject3D): TObject3D;
+    function  GetObject(ID: LongInt): TObject3D;
+    {: This method transforms a set of object or all the objects
+       present in the CAD.
+
+       The method applies the <I=T> transform matrix to the objects
+       with the <I=ID> that are present in <I=ListOfObj>. This
+       parameter is an array that may contains:
+
+       <LI=only one element equal to -1. In this case <I=T> will be
+       applied to all the objects present in the CAD.
+       <LI=a list of integers greater or equal to zero. In this case
+       <I=T> will be applied to the objects with the specified
+       <I=IDs>. The array must not have duplicated IDs.
+
+       If some ID in the array doesn't refer to an object in the CAD
+       an <See Class=ECADListObjNotFound> exception will be raised
+       and the operation stopped.
+    }
+    procedure TransformObjects(ListOfObj: array of LongInt; T: TTransf3D);
+    procedure RedrawObject(Obj: TObject3D);
+
+    {: This property contains the extension of the drawing.
+
+       The drawing extension is the smallest axis aligned
+       box that bounds all the objects in the CAD.
+       When you refer to the property the extension box is
+       computed and this may require a bit of time for a complex draw.
+
+       If you want to use this value more than once in a series of
+       computations, it is better to store it in a local variable
+       instead of use this property in all the computations.
+    }
+    property DrawingExtension: TRect3D read GetExtension;
+  end;
+
+  {: This class defines an axis indicator that is drawed on the
+     lower-left bound of a 3D viewport.
+
+     It is used to show the axis orientation and it is useful when
+     the view point changes dynamically.
+
+     The indicator keeps the same size and position regardless of
+     the current zooming factor.
+
+     The axis on the indicator are drawed as line with different
+     colors. The colors can be changed but as default the have
+     the following meanings:
+
+     <LI=X axis is blue>
+     <LI=Y axis is red>
+     <LI=Z axis is green>
+  }
+  TCAD3DAxis = class(TPersistent)
+  private
+    fXColor, fYColor, fZColor: TColor;
+    fVisible: Boolean;
+    fSize: Integer;
+    fOwnerView: TCADViewport3D;
+
+    procedure SetXColor(Cl: TColor);
+    procedure SetYColor(Cl: TColor);
+    procedure SetZColor(Cl: TColor);
+    procedure SetSize(Sz: Integer);
+    procedure SetVisible(V: Boolean);
+  public
+    constructor Create(Owner: TCADViewport3D);
+    {: This method draws the axis indicator on the <I=Cnv> canvas at
+       the point <I=Pt>.
+    }
+    procedure PaintAxes(const P: TPoint; Cnv: TCanvas);
+  published
+    {: This property defines the color for the X axis.
+
+       By default it is blue.
+    }
+    property XColor: TColor read fXColor write SetXColor default clRed;
+    {: This property defines the color for the Y axis. 
+
+       By default it is red.
+    }
+    property YColor: TColor read fYColor write SetYColor default clBlue;
+    {: This property defines the color for the Z axis.
+
+       By default it is green.
+    }
+    property ZColor: TColor read fZColor write SetZColor default clGreen;
+    {: This property defines the size of the indicator in pixels.
+    }
+    property Size: Integer read fSize write SetSize default 30;
+    {: If this property is <B=True> the indicator will be drawed,
+       otherwise it will not be drawed.
+    }
+    property Visible: Boolean read fVisible write SetVisible default True;
+  end;
+
+  {: This component implements a 3D viewport that is control that
+     display the contents of a <See Class=TCADCmp3D> component.
+
+     A 3D viewport acts as a <I=camera> that can be positioned and
+     aimed in the world, and when it is positioned you can shoot
+     photos. As with a camera you have to select where the camera is
+     and where it look, as well as where is its up vector.
+     In this control all of these property must be set before a
+     scene has to be viewed.
+
+     A way to setup the camera is to specify the parameters
+     for a 3D plane on which the CAD contents will be projected
+     (called here <I=projection plane or view plane>). When the
+     objects are projected, the projection plane is mapped on
+     the screen and you can see a 2D representation of the world.
+
+     To define the plane are needed:
+     <LI=A point on the projection plane (<I=VRP>).
+       This point is the origin of the coordinate system on the plane
+       (or <I=view plane coordinate system>). This specifies also
+       the <I=center of projection>.>
+     <LI=A normal to the plane (<I=VPN>).
+       This versor points in the opposite direction to the view
+       direction. That is if it is set to (-1, 0, 0) we are looking
+       forward the X axis in the direction (1, 0, 0).>
+     <LI=A UP versor (<I=VUP>). It defines the Y direction of the
+     view plane coordinate system. It can be thought as the vertical
+     side of the postcard obtained through the camera.>
+
+     The dimension of the postcard are specified by the
+     <See Property=TCADViewport@VisualRect> property.
+
+     The other way to setup the camera is by means of the
+     <See Method=TCADViewport3D@SetCamera> method and
+     <See Method=TCADPerspectiveViewport3D@SetFieldOfView> method.
+
+     In addition to the above parameters the following parameters
+     are also needed:
+     <LI=<See Property=TCADViewport3D@FrontClip>. It defines
+     the fartest distance besides which the objects are no
+     drawed. If an object crosses this plane it will be clipped.>
+     <LI=<See Property=TCADViewport3D@BackClip>. It defines
+     the nearest distance in front of which the objects are
+     no drawed. If an object crosses this plane it will be clipped.>
+
+     Both distances are positive away the view direction.
+
+     In order to draw an object, the following operation are
+     performed by the viewport and the object:
+
+     <LI=The object is transformed by a roto-translation
+     (<I=Orientation transform matrix>) that
+     position it with respect to the view plane coordinate
+     system (<See Property=TCADViewport3D@ViewOrientation>) transform.
+     This transform the world coordinate system into the
+     view plane coordinate system.>
+     <LI=The object is projected and normalized using the
+     <See Property=TCADViewport3D@ViewNormalization> transform. This
+     transform the view plane coordinate system into the
+     normalized view volume.>
+     <LI=The homogeneous clipping is applied to the object.>
+     <LI=The clipped object is mapped on the control canvas
+     using the <See Property=TCADViewport3D@ViewMapping> transform.>
+
+     See also <See Class=TCADViewport>.
+  }
+  TCADViewport3D = class(TCADViewport)
+  private
+    fPickFilter: TObject3DClass;
+    { ViewOrientation è uguale per tutti.
+      ViewNormalization porta da Wrld a NRC.
+      E' quindi la combinazione tra ViewOrientation
+      e la normalizzazione ritornata da BuildViewNormalization.
+      (che dipende dalla proiezione).
+      Le normalizzazioni devono portare al
+      rettangolo normalizzato. }
+    fViewOrientation, fViewNormalization: TTransf3D;
+    { ViewMapping porta da NRC a schermo. }
+    fViewMapping: TTransf2D;
+    fCADCmp3D: TCADCmp3D;
+    fAxis: TCAD3DAxis;
+
+    fBackPlane, fFrontPlane: TRealType; { in VRC. Sono entrambi positivi ma Front è nella direzione di VPN e back di -VPN. }
+    fVRP: TPoint3D;
+    fVPN, fVUP: TVector3D;
+    fPRPlaneViewPointDistance: TRealType;
+
+    { Event handlers }
+    FOnMouseDown3D, FOnMouseUp3D: TMouseEvent3D;
+    FOnMouseMove3D: TMouseMoveEvent3D;
+    fOnViewProjectionChanged: TNotifyEvent;
+
+    procedure SetCADCmp3D(Cad: TCADCmp3D);
+    procedure SetVPN(V: TVector3D);
+    procedure SetVRP(P: TPoint3D);
+    procedure SetVUP(V: TVector3D);
+    procedure SetFClip(F: TRealType); virtual;
+    procedure SetBClip(B: TRealType); virtual;
+    function  GetPRPlanePosition: TPoint3D;
+    function  GetViewPoint: TPoint3D;
+    function  GetCameraUP: TVector3D;
+    procedure _DrawObject2D(const Obj: TGraphicObject; const Cnv: TDecorativeCanvas);
+    procedure _DrawObjectWithRubber2D(const Obj: TGraphicObject; const Cnv: TDecorativeCanvas);
+  protected
+    procedure SetCADCmp(Cad: TCADCmp); override;
+    procedure CopyBackBufferRectOnCanvas(const Rect: TRect; const GenEvent: Boolean); override;
+    procedure DrawObject(const Obj: TGraphicObject; const Cnv: TDecorativeCanvas; const {%H-}ClipRect2D: TRect2D); override;
+    procedure DrawObjectWithRubber(const Obj: TGraphicObject; const Cnv: TDecorativeCanvas; const {%H-}ClipRect2D: TRect2D); override;
+    {: This method must returns a transform matrix that is used to
+       transform the <I=world coordinate system> into the
+       <I=view plane coordinate system>.
+
+       <I=LVRP> is a reference point on the view plane used as
+       the oringin of the <I=view plane coordinate system>.
+       <I=LVUP> is the up versor of the <I=view plane> and
+       <I=LVPN> is the normal versor of the <I=view plane>.
+
+       See <See Class=TCADViewport3D> for details.
+    }
+    function  BuildViewOrientationTransform(const LVRP: TPoint3D; const LVUP, LVPN: TVector3D): TTransf3D; virtual;
+    {: This method is called by the viewport whenever a changing in the
+       mapping transform from window plane (view plane) and canvas
+       rectangle is required.
+
+       It must returns a 2d transform matrix that transforms the 2d points
+       in the visual rect (see <See Property=TCADViewport@VisualRect>)
+       in the 2d points in the client rectangle of the control Canvas.
+
+       <I=ViewWin> is the visual rect (that is the portion of
+       the world currently in view); <I=ScreenWin> is the portion of the
+       control's canvas that must contains the drawing and <I=AspectRatio> is
+       an optional aspect ratio (Width/Heigth) to be preserved in the mapping.
+
+       If AspectRatio is zero then no aspect ratio is specified, otherwise the
+       aspect ratio must modify the <I=ViewWin> dimensions so that they preserve
+       this aspect ratio. The new ViewWin will became the <See Property=TCADViewport@VisualRect>
+       of the viewport.
+
+       You must redefine this method if you want to create a new viewport,
+       for example you can also change any other projection transform when
+       this method is called; by default it returns <See const=IdentityTransf2D>.
+
+       <B=Note>: For a TCADViewport3D this method updates also the
+       projection-normalization matrix by calling the
+       <See Method=TCADViewport3D@BuildViewNormalizationTransform> method.
+    }
+    function  BuildViewportTransform(var ViewWin: TRect2D; const ScreenWin: TRect; const AspectRatio: TRealType): TTransf2D; override;
+    {: This method must returns a transform matrix that is used to
+       project and normalize points defined in the
+       <I=view plane coordinates system>.
+
+       The returned transformation includes the projection matrix
+       and the normalization matrix. This matrix
+       translates the <I=view plane coordinate system> into the
+       <I=normalized view volume>. See <See Class=TCADViewport3D>
+       for details.
+
+       <I=View> is the visual rect (that is the portion of
+       the view plane currently in view); <I=FP> and <I=BP>
+       are, respectively, the front clipping plane and the
+       back clipping plane.
+
+       <B=Note>: This method must be specified in the derived
+       viewports to implement a specific view projection.
+       Actually the projection is done after the clipping by
+       a division by the homogeneous coordinate <I=W>.
+    }
+    function  BuildViewNormalizationTransform(View: TRect2D; FP, BP: TRealType): TTransf3D; virtual; abstract;
+    function  GetPixelAperture: TPoint2D; override;
+    procedure MouseMove(Shift: TShiftState; X, Y: Integer); override;
+    procedure MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
+    procedure MouseUp(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
+  public
+    constructor Create(AOwner: TComponent); override;
+    destructor Destroy; override;
+    {: This method updates the <I=orientation matrix> by calling
+       the <SeeMethod=TCADViewport3D@BuildViewOrientationTransform> method.
+
+       You may want to use this method to force the updates of the
+       orientation transform when the camera is moved
+
+       <B=Note>: the method is automatically called when you change the plane
+        properties or call the camera methods.
+    }
+    procedure UpdateViewportOrientation;
+    {: This method draws a 2D object on the 3D viewport.
+
+       <I=Obj> is that object to be drawed and have to be
+       of <See Class=TObject2D> type or an exception will be
+       raised. If <I=CtrlPts> is <B=True>
+       the control points of the object will also be drawed.
+
+       The object is drawed by calling its <See Method=TObject2D@Draw>
+       method if it is visible (that is it is contained in the
+       <See Property=TCADViewport@VisualRect>)).
+
+       The object is drawed using the
+       <See Property=TCADViewport@ViewportToScreenTransform> transform
+       matrix.
+
+       <B=Note>: The method use the 3D viewport as it is a 2D viewport.
+    }
+    procedure DrawObject2D(const Obj: TObject2D; const CtrlPts: Boolean);
+    {: This method draws a 2D object on the viewport.
+
+       <I=Obj> is that object to be drawed. If <I=CtrlPts> is <B=True>
+       the control points of the object will also be drawed.
+
+       The object is drawed by calling its <See Method=TObject2D@Draw>
+       method if it is visible (that is it is contained in the
+       <See Property=TCADViewport@VisualRect>)).
+
+       This method draws the object only on the canvas of the control
+       and not in the off-screen buffer. So if you call the
+       <See Method=TCADViewport@Refresh> method the effect of this
+       method are removed without the need to a complete Repaint.
+
+       <B=Note>: The method use the 3D viewport as it is a 2D viewport.
+    }
+    procedure DrawObject2DWithRubber(const Obj: TObject2D; const CtrlPts: Boolean);
+    {: This method draws a 3D object on the viewport.
+
+       <I=Obj> is that object to be drawed. If <I=CtrlPts> is
+       <B=True> the control points of the object will
+       also be drawed.
+
+       The object is drawed by calling its <See Method=TObject3D@Draw>
+       method if it is visible (that is it is contained in the
+       normalized view volume after the projection-normalization
+       matrix if applied to it).
+
+       See <See Class=TCADViewport3D> for details.
+    }
+    procedure DrawObject3D(const Obj: TObject3D; const CtrlPts: Boolean);
+    {: This method draws a 3D object on the viewport.
+
+       <I=Obj> is that object to be drawed. If <I=CtrlPts> is <B=True>
+       the control points of the object will also be drawed.
+
+       The object is drawed by calling its <See Method=TObject3D@Draw>
+       method if it is visible (that is it is contained in the
+       normalized view volume after the projection-normalization
+       matrix if applied to it).
+
+       This method draws the object only on the canvas of the control
+       and not in the off-screen buffer. So if you call the
+       <See Method=TCADViewport@Refresh> method the effect of this
+       method are removed without the need to a complete Repaint.
+    }
+    procedure DrawObject3DWithRubber(const Obj: TObject3D; const CtrlPts: Boolean);
+    procedure CopyRectToCanvas({%H-}CADRect: TRect2D; const CanvasRect: TRect; const Cnv: TCanvas; const Mode: TCanvasCopyMode); override;
+    procedure ZoomToExtension; override;
+    {: This method changes the camera properties and the visual rect
+       dimension to see the <I=Box> from its upper-left-front
+       corner.
+
+       Use this method to see a region of the world without
+       computing the camera position and aiming.
+
+       This method repaint the viewport.
+    }
+    procedure ZoomToBox(const Box: TRect3D);
+    {: This method change the camera position and aiming.
+
+       <I=ProjectionPlaneP> is a point on the camera view plane
+       (consider it as the projection of the <I=center of projection>
+       on the view plane of the camera). <I=ViewP> is the point
+       at which the camera is looking. <I=UP> is the camera's UP versor.
+
+       This method repaint the viewport.
+
+       See also <See Method=TCADPerspectiveViewport3D@SetFieldOfView>.
+    }
+    procedure SetCamera(const ProjectionPlaneP, ViewP: TPoint3D; const Up: TVector3D);
+    {: This method returns the versor that goes from the center of
+       projection to the <I=WPt> point.
+
+       The center of projection is the point at which the projection
+       rays intersect (it may be at infinitum).
+    }
+    function  GetRayVersor(const WPt: TPoint3D): TVector3D; dynamic; abstract;
+    {: This method fill in a list with the objects that are contained
+       in a rectangular region of the view plane.
+
+       <I=ResultLst> is the list that will contain the objects found;
+       <I=Frm> is a rectangle in view plane coordinates.
+       <I=Mode> may be one of the following values:
+
+       <LI=if it is <I=gmAllInside> then only the objects that
+         are fully contained in the rectangle are inserted into the list.>
+       <LI=if it is <I=gmCrossFrame> then the objects that are
+         fully or partially contained in the rectangle are inserted
+         into the list.>
+
+       If <I=RemoveFromCAD> is <B=True> then the objects added to
+       the list are also removed from the CAD.
+
+       This method is useful for create a pick-in-region function,
+       or to create a source block with the objects in a region
+       by removing the objects found from the CAD.
+    }
+    procedure GroupObjects(const ResultLst: TGraphicObjList; Frm: TRect2D; const Mode: TGroupMode; const RemoveFromCAD: Boolean);
+    {: This method returns an object that has the point <I=Pt> on it.
+
+       The method traverses the list of objects to find an object
+       that is at a distance from <I=Pt> less than <I=Aperture>. If
+       that object is found then it will be returned by the method,
+       otherwise the method will returns <B=nil>.
+
+       <I=Pt> is the point of the picking; <I=Aperture> is the width
+       of the picking region in <B=pixel>.
+
+       <I=NPoint> will contains (if an object will be picked) one of
+       the following values:
+
+       <LI=<I=PICK_NOOBJECT> if no object is found at <I=Pt>.>
+       <LI=<I=PICK_INBBOX> if an object is found that has <I=Pt> in its bounding box.>
+       <LI=<I=PICK_ONOBJECT> if an object is found that has <I=Pt> on its outline.>
+       <LI=<I=PICK_INOBJECT> if an object is found that has <I=Pt> in its interior.>
+       <LI=a value equal or greater than zero if an object is found
+         that has <I=Pt> on one of its control points.>
+
+       The above value are ordered from the lowest priority to the
+       greater priority. If more than one of the above condition is
+       matched the value with the greater priority is returned.
+
+       If there are more than one object at the point <I=Pt> the
+       following rules are applied:
+
+       <LI=The object with the greater priority value is returned>
+       <LI=The last object added to the CAD is returned.>
+
+       The display list is traversed until the last object is
+       encountered and this may require a bit of time in the
+       case of a complex object. If you are satisfied to found
+       the first encountered object that is picked by the point
+       <I=Pt> you may want to set <I=FirstFound> to <B=True>.
+
+       <B=Note>: The method use the <See Method=TObject3D@OnMe> method
+       to check for the picking. If you need a special picking function
+       you may want to call that method.
+
+       The point <I=Pt> must be specified in the <I=world coordinate system>
+       and will be projected and normalized before the picking. The
+       picking itself is made in the <I=normalized view volume> as a 2D
+       picking. For this the picking ignores the depth information.
+    }
+    function  PickObject(Pt: TPoint3D; Aperture: Word; FirstFound: Boolean; var NPoint: Integer): TObject3D;
+    {: This method fills a list with the object that are at a distance
+       from <I=Pt> less than <I=Aperture>.
+
+       The method perform the same operation of <See Method=TCADViewport3D@PickObject>
+       method but the objects that are picked by the point <I=Pt> are all
+       added to the list <I=PickedObjects> in the same order as they
+       are encountered.
+    }
+    function  PickListOfObjects(const PickedObjects: TList; Pt: TPoint3D; Aperture: Word): Integer;
+    {: This method returns the point <I=WPt> (specified in world
+       coordinate system) referenced in the view plane coordinate system.
+
+       This is a 2D point that correspond to the projection of <I=WPt> on
+       the view plane.
+    }
+    function  WorldToViewport(WPt: TPoint3D): TPoint2D; virtual;
+    {: This method returns the point <I=VPt> (specified in view plane
+       coordinate system) referenced in the world coordinate system.
+
+       This is a 3D point that correspond to the point <I=VPt> in
+       the world.
+    }
+    function  ViewportToWorld(VPt: TPoint2D): TPoint3D; virtual;
+    {: This method returns the point <I=WPt> (specified in world
+       coordinate system) referenced in the normalized view volume
+       coordinate system.
+
+       This is a 3D point with its X coordiate ranging from -1 to 1,
+       its Y coordinate ranging from -1 to 1 and its Z coordinate
+       ranging from -1 to 0.
+
+       The point <I=WPt> is firstly transformed in the view plane
+       coordinate system, then projected on the view plane and
+       finally normalized to the canonical view volume, that
+       correspond to the view frustum normalized to the box
+       from (-1, -1, -1) to (1, 1, 0).
+    }
+    function  WorldToNRC(WPt: TPoint3D): TPoint3D; virtual;
+    {: This method returns the point <I=NPt> (specified in normalize volume
+       coordinate system) referenced in the screen coordinate system.
+
+       <I=NPt> is a 3D point with its X coordiate ranging from -1 to 1,
+       its Y coordinate ranging from -1 to 1 and its Z coordinate
+       ranging from -1 to 0. This point is mapped on the screen coordinate
+       system.
+    }
+    function  NRCToScreen(NPt: TPoint3D): TPoint; virtual;
+    {: This method returns the point <I=WPt> in world coordinate system
+       transformed by the inverse of the object model trasform of <I=Obj>.
+
+       This method simply obtain the point <I=WPt> referenced in
+       the object coordinate system of <I=Obj>.
+    }
+    function  WorldToObject(Obj: TObject3D; WPt: TPoint3D): TPoint3D;
+    {: This method returns the point <I=OPt> in object coordinate system
+       transformed by the object model trasform of <I=Obj>.
+
+       This method simply obtain the point <I=OPt> referenced in
+       the world coordinate system.
+    }
+    function  ObjectToWorld(Obj: TObject3D; OPt: TPoint3D): TPoint3D;
+
+    {: This property may contains a class variable that is used to limit
+       the picking to only the objects of that class.
+
+       This property is used in <See Method=TCADViewport3D@PickObject>,
+       <See Method=TCADViewport3D@PickListOfObjects> and
+       <See Method=TCADViewport3D@GroupObjects>.
+    }
+    property PickFilter: TObject3DClass read FPickFilter write FPickFilter;
+    {: This property contains the view plane normal versor.
+
+       This versor specify where the camera is looking. This versor
+       is in the opposite direction of the camera aiming. So if
+       this versor is equals to (-1, 0, 0), the camera is lookin
+       downward the positive X axis.
+    }
+    property VPN: TVector3D read fVPN write SetVPN;
+    {: This property contains a point on the view plane.
+
+       This point is the origin of the coordinate system on the plane
+       (or <I=view plane coordinate system>). This specifies also
+       the <I=center of projection>.>
+    }
+    property VRP: TPoint3D read fVRP write SetVRP;
+    {: This property contains the UP versor of the view plane.
+
+       This versor defines the Y direction of the
+       view plane coordinate system. It can be thought as the
+       vertical side of the postcard obtained through the camera.
+    }
+    property VUP: TVector3D read fVUP write SetVUP;
+    {: This property contains the Z coordinate of the
+       front clipping plane in view plane coordinate system.
+
+       This value defines the fartest distance besides which the
+       objects are no drawed. If an object crosses this plane it
+       will be clipped.
+
+       This distances is positive away the view direction.
+
+       <B=Note>: If you don't want to clip any object against
+       the clipping planes set FrontClip to a big positive value
+       and BackClip to a big negative value.
+    }
+    property FrontClip: TRealType read fFrontPlane write SetFClip;
+    {: This property contains the Z coordinate of the
+       back clipping plane in view plane coordinate system.
+
+       This value defines the nearest distance in front of which the
+       objects are no drawed. If an object crosses this plane it
+       will be clipped.
+
+       This distances is positive away the view direction.
+
+       <B=Note>: If you don't want to clip any object against
+       the clipping planes set FrontClip to a big positive value
+       and BackClip to a big negative value.
+    }
+    property BackClip: TRealType read fBackPlane write SetBClip;
+    {: This property contains the view orientation transform matrix.
+
+       See <See Class=TCADViewport3D> for details.
+    }
+    property ViewOrientation: TTransf3D read fViewOrientation;
+    {: This property contains the view projection-normalization
+       transform matrix.
+
+       See <See Class=TCADViewport3D> for details.
+    }
+    property ViewNormalization: TTransf3D read fViewNormalization;
+    {: This property contains the normalized view volume mapping
+       transform that maps a normalized point into a point in the
+       screen coordinate system.
+    }
+    property ViewMapping: TTransf2D read fViewMapping;
+    {: This property contains the camera view point, that is
+       the point in the world to which the camera is looking.
+
+       This value is correct only if you have called
+       <See Method=TCADViewport3D@SetCamera> to position and aim the camera.
+    }
+    property CameraViewPoint: TPoint3D read GetViewPoint;
+    {: This property contains the camera view plane (or projection plane)
+       center, that is the point in the world to which the camera is
+       positioned.
+
+       This value is correct only if you have called
+       <See Method=TCADViewport3D@SetCamera> to position and aim the camera.
+    }
+    property CameraProjectionPlanePosition: TPoint3D read GetPRPlanePosition;
+    {: This property contains the camera view plane (or projection plane)
+       UP direction, that is the direction in the world that rapresent
+       the vertical side of the imaginari postcard made by the camera.
+
+       This value is correct only if you have called
+       <See Method=TCADViewport3D@SetCamera> to position and aim the camera.
+    }
+    property CameraUP: TVector3D read GetCameraUP;
+  published
+    {: This property contains an instance of the <See Class=TCAD3DAxis> class.
+    }
+    property Axis: TCAD3DAxis read fAxis write fAxis;
+    {: This property contains the <See Class=TCADCmp3D> control that
+       acts as the source for the drawing to be painted in the
+       viewport.
+
+       The CADCmp3D contains the display list of the drawing that will
+       be rendered in the canvas of the viewport control.
+
+       You must assign it before using the viewport.
+    }
+    property CADCmp3D: TCADCmp3D read fCADCmp3D write SetCADCmp3D;
+    {: EVENTS}
+    {: This property may contain an event-handler that will be
+       called when the mouse in moved on the control.
+
+       See <See Type=TMouseMoveEvent3D> for details on the event
+       handler.
+    }
+    property OnMouseMove3D: TMouseMoveEvent3D read FOnMouseMove3D write FOnMouseMove3D;
+    {: This property may contain an event-handler that will be
+       called when the user presses a mouse button with the mouse pointer
+       over the viewport.
+
+       See <See Type=TMouseEvent3D> for details on the event
+       handler.
+    }
+    property OnMouseDown3D: TMouseEvent3D read FOnMouseDown3D write FOnMouseDown3D;
+    {: This property may contain an event-handler that will be
+       called when the user releases a mouse button with the mouse pointer
+       over the viewport.
+
+       See <See Type=TMouseEvent3D> for details on the event
+       handler.
+    }
+    property OnMouseUp3D: TMouseEvent3D read FOnMouseUp3D write FOnMouseUp3D;
+    {: This property may contains an event-handler that will be
+       called when the view orientation and/or projection normalization
+       transforms are changed.
+    }
+    property OnViewProjectionChanged: TNotifyEvent read fOnViewProjectionChanged write fOnViewProjectionChanged;
+  end;
+
+  {: This control defines a parallel viewport 3D.
+
+     This kind of viewport use projection rays that are parallel
+     to the view plane normal to project points in the world.
+
+     This control is well suited when you don't need the
+     <I=perspective foreshortening> effect.
+  }
+  TCADParallelViewport3D = class(TCADViewport3D)
+  protected
+    function BuildViewNormalizationTransform(View: TRect2D; FP, BP: TRealType): TTransf3D; override;
+  public
+    constructor Create(AOwner: TComponent); override;
+    function GetRayVersor(const {%H-}WPt: TPoint3D): TVector3D; override;
+  end;
+
+  {: This control defines a parallel viewport 3D that has
+     the view plane normal along the principal axis.
+
+     This control is well suited when you need to see the
+     side, front and top view of the world.
+  }
+  TCADOrtogonalViewport3D = class(TCADParallelViewport3D)
+  private
+    fView: TOrtoViewType;
+    fDirection: TOrtoDirectionType;
+    fElevation: TRealType;
+
+    procedure SetView(V: TOrtoViewType);
+    procedure SetDirection(D: TOrtoDirectionType);
+    procedure SetElevation(E: TRealType);
+  protected
+    function BuildViewOrientationTransform(const {%H-}LVRP: TPoint3D; const {%H-}LVUP, {%H-}LVPN: TVector3D): TTransf3D; override;
+  public
+    constructor Create(AOwner: TComponent); override;
+    {: This property contains the elevation of the view plane respect
+       to the same view plane that has the view reference point (VRP)
+       at the origin of the world.
+
+       By default its value is 0.
+    }
+    property Elevation: TRealType read fElevation write SetElevation;
+  published
+    {: This property contains the view plane normal of the viewport.
+
+       See <See Type=TOrtoViewType> for details.
+    }
+    property View: TOrtoViewType read fView write SetView;
+    {: This property contains the view plane normal direction
+       of the viewport.
+
+       See <See Type=TOrtoDirectionType> for details.
+    }
+    property Direction: TOrtoDirectionType read fDirection write SetDirection;
+  end;
+
+  {: This control defines a perspective projection viewport.
+
+     Use this control when you want the
+     <I=perspective foreshortening> effect.
+  }
+  TCADPerspectiveViewport3D = class(TCADViewport3D)
+  private
+    fPlaneDistance: TRealType;
+
+    procedure SetPlaneDistance(D: TRealType);
+    procedure SetBClip(B: TRealType); override;
+    function GetCenterOfProjection: TPoint3D;
+  protected
+    function BuildViewNormalizationTransform(View: TRect2D; FP, BP: TRealType): TTransf3D; override;
+  public
+    constructor Create(AOwner: TComponent); override;
+    function  GetRayVersor(const WPt: TPoint3D): TVector3D; override;
+    {: This methods change the field of view of the perspective
+       projection.
+
+       The method changes the view frustum through which the world
+       is seen.
+
+       <I=Angle> is the angle of the field of view in radiants,
+       and <I=Aspect> is the aspect ratio (Width/Height) of the
+       view frustum.
+
+       <IMAGE=viewfrust.bmp>
+
+       This method is useful to simulate the camera's lens.
+    }
+    procedure SetFieldOfView(const Angle, Aspect: TRealType);
+
+    {: This property contains the center of proejction of the
+       perspective viewport.
+
+       This is the point where the projection rays intersect.
+    }
+    property CenterOfProjection: TPoint3D read GetCenterOfProjection;
+    {: This property contains the plane distance, in view plane coordinate
+       system, of the view plane from the center of projection.
+    }
+    property PlaneDistance: TRealType read fPlaneDistance write SetPlaneDistance;
+  end;
+
 { -----===== Starting Cs4CADPrgClass.pas =====----- }
   {: This type defines the events that a <See Class=TCADPrg> manages.
 
@@ -4830,9 +6612,9 @@ type
        Use this method to handle the events and perform operations
        or change the active state.
     }
-    function OnEvent(Event: TCADPrgEvent; MouseButton: TCS4MouseButton;
-                     Shift: TShiftState; Key: Word;
-                     var NextState: TCADStateClass): Boolean; dynamic;
+    function OnEvent({%H-}Event: TCADPrgEvent; {%H-}MouseButton: TCS4MouseButton;
+                     {%H-}Shift: TShiftState; {%H-}Key: Word;
+                     var {%H-}NextState: TCADStateClass): Boolean; dynamic;
     {: This method is called when the current interactive task is
        stopped by calling the <See Method=TCADPrg@StopOperation> method.
 
@@ -4847,7 +6629,7 @@ type
        <I=State> is the suspended state and <I=SusParam> is the
        parameter of the suspended state.
     }
-    procedure OnResume(const State: TClass; const SusParam: TCADPrgParam); dynamic;
+    procedure OnResume(const {%H-}State: TClass; const {%H-}SusParam: TCADPrgParam); dynamic;
     {: This property contains an optional description of the
        interaction task.
 
@@ -4928,7 +6710,13 @@ type
     fOldOnPaint, fOnIdle: TNotifyEvent;
     fOnDescriptionChanged: TNotifyEvent;
     fShowCursorCross: Boolean;
+    fCurrentMousePoint: TPoint;
+    //maurog
+    {$IFDEF windows}
+    fNewWndProc, fOldWndProc: Pointer;
+    {$ELSE}
     fNewWndProc, fOldWndProc: TWndMethod;
+    {$ENDIF}
 
     procedure SetShowCursorCross(B: Boolean);
     procedure SetCursorColor(C: TColor);
@@ -4977,32 +6765,32 @@ type
 
        You don't need to use it.
     }
-    function ViewOnKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState): Boolean; dynamic;
+    function ViewOnKeyDown({%H-}Sender: TObject; var Key: Word; Shift: TShiftState): Boolean; dynamic;
     {: This method is called whenever a key event is received.
 
        You don't need to use it.
     }
-    function ViewOnKeyUp(Sender: TObject; var Key: Word; Shift: TShiftState): Boolean; dynamic;
+    function ViewOnKeyUp({%H-}Sender: TObject; var Key: Word; Shift: TShiftState): Boolean; dynamic;
     {: This method is called whenever a mouse event is received.
 
        You don't need to use it.
     }
-    function ViewOnDblClick(Sender: TObject): Boolean; dynamic;
+    function ViewOnDblClick({%H-}Sender: TObject): Boolean; dynamic;
     {: This method is called whenever a mouse event is received.
 
        You don't need to use it.
     }
-    function ViewOnMouseMove(Sender: TObject; Shift: TShiftState; var X, Y: SmallInt): Boolean; dynamic;
+    function ViewOnMouseMove({%H-}Sender: TObject; Shift: TShiftState; var {%H-}X, {%H-}Y: SmallInt): Boolean; dynamic;
     {: This method is called whenever a mouse event is received.
 
        You don't need to use it.
     }
-    function ViewOnMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; var X, Y: SmallInt): Boolean; dynamic;
+    function ViewOnMouseDown({%H-}Sender: TObject; Button: TMouseButton; Shift: TShiftState; var {%H-}X, {%H-}Y: SmallInt): Boolean; dynamic;
     {: This method is called whenever a mouse event is received.
 
        You don't need to use it.
     }
-    function ViewOnMouseUp(Sender: TObject; Button: TMouseButton; Shift: TShiftState; var X, Y: SmallInt): Boolean; dynamic;
+    function ViewOnMouseUp({%H-}Sender: TObject; Button: TMouseButton; Shift: TShiftState; var {%H-}X, {%H-}Y: SmallInt): Boolean; dynamic;
     {: This method is used to send an event to the current state.
 
        You don't need to call it directly.
@@ -5115,6 +6903,9 @@ type
        <See Class=TCADPrg3D>).
     }
     property CurrentViewportPoint: TPoint2D read GetVPPoint write SetVPPoint;
+    {: This property contains the current mouse position in screen coordinates.
+    }
+    property CurrentMousePoint: TPoint read fCurrentMousePoint;
     {: This property is <B=True> when there is an active interaction
        task in the control (that is its current state is not equal
        to the default state).
@@ -5470,6 +7261,296 @@ type
     property SnapFilter: TCADPrg2DSnapFilter read fSnapFilter write fSnapFilter;
   end;
 
+  TCADPrg3D = class;
+
+  {: This type defines the type of a <I=3D mouse button filter>.
+
+     A filter is a procedure that is called by a <I=TCADPrg> control
+     to update the current mouse position of the control.
+
+     <I=Sender> is the TCADPrg instance that has called the
+     filter; <I=CurrentState> is the current state of the control;
+     <I=Button> is the mouse button's state at the moment of the
+     event; <I=WPt> must be set to new world point of the mouse
+     position; <I=X, Y> are the mouse position in screen coordinates.
+
+     A filter is useful to change the position of a mouse event
+     before the event is handled by the current state. For example
+     it may be used to implement an object gravity function by
+     calling in the filter the PickObject method of the linked
+     viewport and if the WPt point is on an object change it to
+     the nearest control point of the object.
+
+     <B=Note>: <I=WPt> contains the current world point of the
+      mouse position at the moment of the activation of the filter.
+      So if you don't need to change it simply left it unchanged.
+  }
+  TMouse3DButtonFilter = procedure(Sender: TCADPrg3D; CurrentState: TCADState; Button: TMouseButton; var WPt: TPoint3D; X, Y: Integer) of Object;
+  {: This type defines the type of a <I=3D mouse move filter>.
+
+     A filter is a procedure that is called by a <I=TCADPrg> control
+     to update the current mouse position of the control.
+
+     <I=Sender> is the TCADPrg instance that has called the
+     filter; <I=CurrentState> is the current state of the control;
+     <I=Button> is the mouse button's state at the moment of the
+     event; <I=WPt> must be set to new world point of the mouse
+     position; <I=X, Y> are the mouse position in screen coordinates.
+
+     A filter is useful to change the position of a mouse event
+     before the event is handled by the current state. For example
+     it may be used to implement an object gravity function by
+     calling in the filter the PickObject method of the linked
+     viewport and if the WPt point is on an object change it to
+     the nearest control point of the object.
+
+     <B=Note>: <I=WPt> contains the current world point of the
+      mouse position at the moment of the activation of the filter.
+      So if you don't need to change it simply left it unchanged.
+  }
+  TMouse3DMoveFilter = procedure(Sender: TCADPrg3D; CurrentState: TCADState; var WPt: TPoint3D; X, Y: Integer) of Object;
+  {: This type defines the type of a <I=3D snap filter>.
+
+     A filter is a procedure that is called by a <I=TCADPrg> control
+     to update the current mouse position of the control.
+
+     <I=Sender> is the TCADPrg instance that has called the
+     filter; <I=CurrentState> is the current state of the control;
+     <I=LastPt> contains the snap origin for the snapping;
+     <I=CurrSnappedPt> must be set to the new snapped point.
+
+     A snap filter is useful to implement complex snapping
+     constraint. For instance you may create an angular snapping
+     by using the <I=LastPt> and <I=CurrSnappedPt> to find the
+     current angle and then forces it to the nearest allowed angle.
+
+     When the filter is activated <I=LastPt> contains the snap origin,
+     that is the value assigned to the <See Property=TCADPrg2D@SnapOriginPoint>
+     property. If there is no valid snap origin then
+     it will be (<I=MaxCoord>, <I=MaxCoord>). You must check for this
+     value when implement a snap filter.
+
+     By default the <I=CurrSnappedPt> will be the standar snapped
+     point that is the point with the X and Y coordinates at integer
+     multiplies of <I=XSnap> and <I=YSnap>.
+
+     <B=Note>: The snapping is always on 2D points on the current working
+     plane (see <See Class=TCADPrg3D>).
+  }
+  TCADPrg3DSnapFilter = procedure(Sender: TCADPrg3D; CurrentState: TCADState; const LastPt: TPoint2D; var CurrSnappedPt: TPoint2D) of Object;
+
+  TCADStateClass3D = class of TCADState3D;
+
+  {: This class defines a state of a interaction task.
+
+     <See Class=TCADPrg> is based on a <I=FSM model> (finite state
+     machine) in which an interaction task is is a set of states,
+     each of them execute some part of the whole task.
+     The interaction task (from now on simply a task) evolves through
+     the states in respons to <I=events>. An <I=event> is some action
+     on the CADPrg or the linked Viewport performed by the user or
+     by the control itself.
+     A task is an <I=active state>, that is the state with receives
+     the events (through the implementation of the
+     <See Method=TCADState@OnEvent>).
+     The active state decides what operation performs in response to
+     the event. See <See Method=TCADState@OnEvent> for details.
+
+     The events are (see also TCADPrgEvent) <I=mouse events, keyboard
+     events, expose events and user events>.
+
+     The user must derives its states from this class to implement
+     an interaction task. A state may be reused in more that one
+     interaction task.
+
+     An interaction task is started by using the
+     <See Method=TCADPrg@StartOperation>,
+     <See Method=TCADPrg@SuspendOperation> and passing it the first
+     state of it.
+
+     To define a state you may want to implement the following
+     methods:
+
+     <LI=<See Method=TCADState@Create> in which you place the
+       initialization code for the state>
+     <LI=<See Method=TCADState@OnEvent> in which you place the
+       code to handle the events>
+     <LI=<See Method=TCADState@OnStop> in which you plane the
+       finalization code for the interaction task (this method
+       is called when an interaction task is stopped, no when
+       the state instace is destroyed.>
+
+     <B=Note>: The instance of a state is created by the <See Class=TCADPrg>
+      control.
+  }
+  TCADState3D = class(TCADState);
+
+  {: This class defines the control used by the library to define
+     interaction tasks. An interaction task is an interactive
+     visual sequence of operation on a Viewport.
+
+     The control implement a FSM (Finite state machine) model
+     that receives events from the user and the Viewport.
+
+     The control also use the concept of <See=Working plane@WORKPLANE> that
+     is a special plane on which the mouse movements are
+     constrained. The snap and ortogonal constraints also
+     work on this plane.
+
+     See also <See Class=TCADState> class for details.
+  }
+  {: <New topic=WORKPLANE@The working plane>
+     To make easy drawing in 3D using only a 2D projection,
+     the <See Class=TCADPrg3D> constrains the mouse on a 2D plane
+     that doesn't need to be the pojection plane. This plane
+     is called <I=the Working Plane>.
+
+     A working plane is a special plane oriented in the space
+     that is used as a reference for all drawings on the viewport.
+     If a working plane is in use, the mouse position is
+     projected on that plane using the <I=projectors> of the
+     projection and so you are sure that any changing in the
+     view point doesn't change the plane on which you are
+     drawing.
+
+     For instance if you are looking from a point that forms
+     an angle 45° with the X-Y plane, if you set the working
+     plane to be equal to the X-Y plane all the mouse movements
+     will lies on that plane. If you change the angle of view,
+     the mouse will again be keept on that plane.
+
+     Of course if you set the working plane to be equal to
+     the X-Y plane and you are looking from the X axis, unexpected
+     results may be possible.
+  }
+  TCADPrg3D = class(TCADPrg)
+  private
+    fCurrentWorldPoint: TPoint3D;
+    fCurrentViewportPoint: TPoint2D;
+    fMouseButtonFilter: TMouse3DButtonFilter;
+    fMouseMoveFilter: TMouse3DMoveFilter;
+    fSnapFilter: TCADPrg3DSnapFilter;
+    fLastCursorPos: TPoint3D;
+    { NEW: Definisce un piano di lavoro su cui è possibile vincolare le coordinate. }
+    fWorkingPlaneNormal, fWorkingPlaneUP: TVector3D;
+    fWorkingPlaneOrigin, fSnapOriginPoint: TPoint3D;
+    fCursorSize: TRealType;
+
+    function GetCurrentWorkPlanePoint: TPoint3D;
+    function GetWPSnappedPoint: TPoint3D;
+    procedure SetWorldPoint(Pt: TPoint3D);
+    procedure SetViewport3D(View3D: TCADViewport3D);
+    function GetViewport3D: TCADViewport3D;
+    function GetWorkingPlaneXDir: TVector3D;
+  protected
+    function ViewOnMouseMove(Sender: TObject; Shift: TShiftState; var X, Y: SmallInt): Boolean; override;
+    function ViewOnMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; var X, Y: SmallInt): Boolean; override;
+    function ViewOnMouseUp(Sender: TObject; Button: TMouseButton; Shift: TShiftState; var X, Y: SmallInt): Boolean; override;
+
+    function GetVPPoint: TPoint2D; override;
+    procedure SetVPPoint(const Pt: TPoint2D); override;
+
+    procedure DrawCursorCross; override;
+    procedure HideCursorCross; override;
+  public
+    constructor Create(AOwner: TComponent); override;
+    destructor Destroy; override;
+
+    {: This method returns the point on the current working
+       plane that correspond to the point <I=WPt> in the world
+       coordinate system.
+
+       See also <See=Working plane@WORKPLANE>.
+    }
+    function WorldToWorkingPlane(WPt: TPoint3D): TPoint3D;
+    {: This property contains the world point of the
+       current position of the mouse in the world coordinate system.
+
+       This point lies on the projection plane regardless of the
+       current working plane settings.
+    }
+    property CurrentWorldPoint: TPoint3D read fCurrentWorldPoint write SetWorldPoint;
+    {: This property contains the world point of the
+       current position of the mouse referred to
+       the <See=Working plane@WORKPLANE>.
+
+       This point is affected by the current working plane
+       settings.
+    }
+    property CurrentWorkingPlanePoint: TPoint3D read GetCurrentWorkPlanePoint;
+    {: This property contains the world point of the
+       current position of the mouse referred to
+       the <See=Working plane@WORKPLANE>.
+
+       The point is snapped using the current snap setting if
+       <See Property=TCADPrg@UseSnap> is <B=True>.
+    }
+    property CurrentWorkingPlaneSnappedPoint: TPoint3D read GetWPSnappedPoint;
+    {: This property contains the normal to the
+       <See=Working plane@WORKPLANE>.
+
+       By default it is <I=(0, 0, 1).
+    }
+    property WorkingPlaneNormal: TVector3D read fWorkingPlaneNormal write fWorkingPlaneNormal;
+    {: This property contains the UP versor (Y axis direction)
+       of the <See=Working plane@WORKPLANE>.
+
+       By default it is <I=(0, 1, 0).
+    }
+    property WorkingPlaneUP: TVector3D read fWorkingPlaneUp write fWorkingPlaneUp;
+    {: This property contains the X axis direction of the
+       <See=Working plane@WORKPLANE>.
+
+       By default it is <I=(1, 0, 0).
+    }
+    property WorkingPlaneXDir: TVector3D read GetWorkingPlaneXDir;
+    {: This property contains the origin of the 2D coordinate
+       system of the <See=Working plane@WORKPLANE>.
+
+       By default it is <I=(0, 0, 0).
+    }
+    property WorkingPlaneOrigin: TPoint3D read fWorkingPlaneOrigin write fWorkingPlaneOrigin;
+    {: This property contains the snap origin passed to the snap filter.
+
+       By default its value is (<I=MaxCoord>, <I=MaxCoord>).
+
+       See <See Type=TCADPrg2DSnapFilter> for details.
+    }
+    property SnapOriginPoint: TPoint3D read fSnapOriginPoint write fSnapOriginPoint;
+  published
+    {: This property contains the linked viewport.
+
+       See also <See Property=TCADPrg@Viewport>.
+    }
+    property Viewport3D: TCADViewport3D read GetViewport3D write SetViewport3D;
+    {: This property contains the dimension in drawing units of
+       the mouse cursor.
+
+       A CADPrg3D use a special mouse cursor that show the
+       grid spacinga and the working plane orientation.
+    }
+    property CursorSize: TRealType read fCursorSize write fCursorSize;
+    {: This property may contains a filter that will be called
+       when a mouse button event is fired.
+
+       See also <See Type=TMouse3DButtonFilter>.
+    }
+    property MouseButtonFilter: TMouse3DButtonFilter read fMouseButtonFilter write fMouseButtonFilter;
+    {: This property may contains a filter that will be called
+       when a mouse movement event is fired.
+
+       See also <See Type=TMouse3DMoveFilter>.
+    }
+    property MouseMoveFilter: TMouse3DMoveFilter read fMouseMoveFilter write fMouseMoveFilter;
+    {: This property may contains a filter that will be called
+       when a the snapped point of the current mouse position
+       is being computed.
+
+       See also <See Type=TCADPrg3DSnapFilter>.
+    }
+    property SnapFilter: TCADPrg3DSnapFilter read fSnapFilter write fSnapFilter;
+  end;
+
   {: This function returns the angle in radiants that
      corresponds to <I=A> in degrees.
   }
@@ -5580,8 +7661,10 @@ type
 
      <LI=<I=V1> is the first vector.>
      <LI=<I=V2> is the second vector.>
+     <LI=<I=Digits> if specified is the digits at witch stop test (ex: 2=at the second digit).>
   }
-  function IsSameVector2D(const V1, V2: TVector2D): Boolean;
+  function IsSameVector2D(const V1, V2: TVector2D; const Digits: TRoundToRange): Boolean; overload;
+  function IsSameVector2D(const V1, V2: TVector2D): Boolean; overload;
   {: This function returns <B=True> if two transform matrices
      are equal and <B=False> otherwise.
 
@@ -6205,6 +8288,889 @@ type
   function BoxOutBox2D(Box1, Box2: TRect2D): TRect2D;
   function BoxFillingCartesian2D(const Box1, Box2: TRect2D): Word;
 
+  {: Use this function to initialize a 3D point variable.
+
+     This function returns always a cartesing point (W=1).
+
+     Parameters:
+
+     <LI=<I=X> is the X coordinate of the point.>
+     <LI=<I=Y> is the Y coordinate of the point.>
+  }
+  function Point3D(const X, Y, Z: TRealType): TPoint3D;
+  {: Use this function to initialize a 3D rectangle variable.
+
+     This function returns always a cartesian rectangle (with W=1).
+
+     Parameters:
+
+     <LI=<I=Left> is the left X coordinate of the rectangle.>
+     <LI=<I=Bottom> is the bottom Y coordinate of the rectangle.>
+     <LI=<I=Right> is the right X coordinate of the rectangle.>
+     <LI=<I=Top> is the top Y coordinate of the rectangle.>
+  }
+  function Rect3D(const Left, Bottom, Front, Right, Top, Back: TRealType): TRect3D;
+  {: This function normalizes a vector.
+
+     Normalizing a Vector means that the vector coordinates
+     are divided by the length of the vector. If the lenght is
+     zero an exception will be raised.
+
+     Parameters:
+
+     <LI=<I=V> is the vector being normalized.>
+  }
+  function NormalizeVector3D(const V: TVector3D): TVector3D;
+  {: Use this function to create a versor.
+
+     A versor is vector whose length is 1. This function compute
+     this kind of vector by dividing the vector by its length.
+     If the lenght is zero an exception will be raised.
+
+     Parameters:
+
+     <LI=<I=X> is the X coordinate of the versor.>
+     <LI=<I=Y> is the Y coordinate of the versor.>
+  }
+  function Versor3D(const X, Y, Z: TRealType): TVector3D;
+  {: This function returns a versor that rapresent the direction from
+     the point <I=PFrom> to the point <I=PTo>.
+
+     The function computes the vector beetwen the two points
+     and then normalizes it.
+
+     Parameters:
+
+     <LI=<I=PFrom> is the starting point of the direction.>
+     <LI=<I=PTo> is the ending point of the direction.>
+  }
+  function Direction3D(const PFrom, PTo: TPoint3D): TVector3D;
+  {: This function returns the vector from the point
+     <I=PFrom> to the point <I=PTo>.
+
+     A vector rapresents the difference of the coordinates
+     from the two points.
+
+     The points are made cartesian before the creation of the vector.
+  }
+  function Vector3D(PFrom, PTo: TPoint3D): TVector3D;
+  {: This function return the matrix <I=M> in which the
+     row <I=Row> is substituted with the vector <I=V>.
+  }
+  function RowVector3D(const M: TTransf3D; Row: Byte; const V: TVector3D): TTransf3D;
+  {: This function return the matrix <I=M> in which the
+     column <I=Col> is substituted with the vector <I=V>.
+  }
+  function ColumnVector3D(const M: TTransf3D; Col: Byte; const V: TVector3D): TTransf3D;
+  {: This function returns the modulus of the vector, that
+     is its length.
+
+     This value is also called the <I=Euclidian Norm> of the vector.
+
+     Parameters:
+
+     <LI=<I=V> is the versor on which the function is applied.>
+  }
+  function VectorLength3D(V: TVector3D): TRealType;
+  {: This function returns <B=True> if two points are equal
+     and <B=False> otherwise.
+
+     All the coordinates (also W) are tested.
+
+     Parameters:
+
+     <LI=<I=P1> is the first point.>
+     <LI=<I=P2> is the second point.>
+  }
+  function IsSamePoint3D(P1, P2: TPoint3D): Boolean;
+  {: This function returns <B=True> if two vectors are equal
+     and <I=False> otherwise.
+
+     All the coordinates (also W) are tested.
+
+     Parameters:
+
+     <LI=<I=V1> is the first vector.>
+     <LI=<I=V2> is the second vector.>
+     <LI=<I=Digits> if specified is the digits at witch stop test (ex: 2=at the second digit).>
+  }
+  function IsSameVector3D(const V1, V2: TVector3D; const Digits: TRoundToRange): Boolean; overload;
+  function IsSameVector3D(const V1, V2: TVector3D): Boolean; overload;
+  {: This function returns <B=True> if two transform matrices
+     are equal and <B=False> otherwise.
+
+     The function use optimizations if the two matrices are
+     cartesian matrices.
+
+     Parameters:
+
+     <LI=<I=T1> is the first matrix.>
+     <LI=<I=T2> is the second matrix.>
+  }
+  function IsSameTransform3D(const T1, T2: TTransf3D): Boolean;
+  {: This function returns <B=True> if a transform matrix is
+     a cartesian matrix, that is a matrix with the third column
+     equal to [0, 0, 0, 1].
+
+     Parameters:
+
+     <LI=<I=T> is the matrix being tested.>
+  }
+  function IsCartesianTransform3D(const T: TTransf3D): Boolean;
+  {: This function returns the cartesian point equivalent
+     to <I=P>.
+
+     A cartesian point has the W coordinate equals to 1.
+     To convert the point all the coordinates are divided by W.
+
+     When a point is made cartesian, there is no way to obtain
+     the original point back.
+
+     Parameters:
+
+     <LI=<I=P> is the point being transformed.>
+  }
+  function CartesianPoint3D(const P: TPoint3D): TPoint3D;
+  {: This function returns the cartesian rectangle equivalent
+     to <I=R>.
+
+     A cartesian rectangle has the W coordinate of its corners
+     equals to 1. To convert the rectangle all the coordinates
+     of the two corners are divided by their W.
+
+     When a rectangle is made cartesian, there is no way to
+     obtain the original rectangle back.
+
+     Parameters:
+
+     <LI=<I=R> is the rectangle being transformed.>
+  }
+  function CartesianRect3D(const R: TRect3D): TRect3D;
+  {: This function returns an ordered rectangle in which the
+     first point is the left-botton one and the second point
+     is the right-top one.
+
+     The returned rectangle is always cartesian.
+
+     Parameters:
+
+     <LI=<I=R> is the rectangle being ordered.>
+  }
+  function ReOrderRect3D(const R: TRect3D): TRect3D;
+  {: This function transforms a 3D point into the
+     equivalent 2D point.
+
+     The resulting point is <I=P3D> projected onto the
+     X, Y plane. The coordinates are divided by the
+     <I=W> coordinate.
+
+     Parameters:
+
+     <LI=<I=P3D> is the point being transformed.>
+  }
+  function Point3DToPoint2D(const P3D: TPoint3D): TPoint2D;
+  {: This function transforms a 2D point into the
+     equivalent 3D point.
+
+     Parameters:
+
+     <LI=<I=P2D> is the point being transformed.>
+  }
+  function Point2DToPoint3D(const P2D: TPoint2D): TPoint3D;
+  {: This function transforms a 3D box into the
+     equivalent 2D box.
+
+     The resulting box is <I=R> projected onto the
+     X, Y plane. The coordinates are divided by the
+     <I=W> coordinate.
+
+     Parameters:
+
+     <LI=<I=R> is the point being transformed.>
+  }
+  function Rect3DToRect2D(const R: TRect3D): TRect2D;
+  {: This function transforms a 2D box into the
+     equivalent 3D box.
+
+     Parameters:
+
+     <LI=<I=R> is the point being transformed.>
+  }
+  function Rect2DToRect3D(const R: TRect2D): TRect3D;
+  {: This function enlarges a box by the specified
+     percentual.
+
+     The resulting box is always cartesian.
+
+     Parameters:
+
+     <LI=<I=R> is the box being enlarged.>
+     <LI=<I=Perc> is the percentual by which enlarge the box.
+     A value of 0.5 means the the rectangle is doubled (50%).>
+  }
+  function EnlargeBoxPerc3D(R: TRect3D; Perc: TRealType): TRect3D;
+  {: This function enlarges a box by the specified
+     delta in all directions.
+
+     The resulting box is always cartesian.
+
+     Parameters:
+
+     <LI=<I=R> is the box being enlarged.>
+     <LI=<I=Delta> is the amount by which enlarge the box.
+     A value of 0.1 means the the rectangle is enlarged by
+     0.1 along the X-Y-Z directions.
+  }
+  function EnlargeBoxDelta3D(R: TRect3D; Delta: TRealType): TRect3D;
+  {: This function multiplies two affine matrix. It returns the
+     resulting matrix.
+
+     The order of multiplication is important for matrixes.
+
+     This function may be useful to concatenate transformation
+     matrixes.
+
+     Parameters:
+
+     <LI=<I=M1> is the first matrix.>
+     <LI=<I=M2> is the second matrix.>
+  }
+  function MultiplyTransform3D(const M1, M2: TTransf3D): TTransf3D;
+  {: This function returns the invers of a matrix.
+
+     The matrix must be non singular (that is its determinant is
+     non zero).
+
+     This function may be useful to obtain the inverse of a
+     transformation.
+
+     Parameters:
+
+     <LI=<I=M> is the matrix to be inverted.>
+  }
+  function InvertTransform3D(const M1: TTransf3D): TTransf3D;
+  {: This function transforms a points by using a transformation
+     matrix.
+
+     Use <See function=Translate3D>, <See function=Rotate3DX>,
+     <See function=Rotate3DY>, <See function=Rotate3DZ> and
+     <See function=Scale3D> to obtain a transformation matrix for
+     the most common transforms.
+
+     Parameters:
+
+     <LI=<I=P> is the point to be transformed.>
+     <LI=<I=T> is the transformation matrix.>
+  }
+  function TransformPoint3D(const P: TPoint3D; const T: TTransf3D): TPoint3D;
+  {: This function transforms a vector by using a transformation
+     matrix.
+
+     Use <See function=Translate3D>, <See function=Rotate3DX>,
+     <See function=Rotate3DY>, <See function=Rotate3DZ> and
+     <See function=Scale3D> to obtain a transformation matrix
+     for the most common transforms.
+
+     Parameters:
+
+     <LI=<I=V> is the vector to be transformed.>
+     <LI=<I=T> is the transformation matrix.>
+  }
+  function TransformVector3D(const V: TVector3D; const T: TTransf3D): TVector3D;
+  {: This function transforms a normal vector by using a transformation
+     matrix.
+
+     Use <See function=Translate3D>, <See function=Rotate3DX>,
+     <See function=Rotate3DY>, <See function=Rotate3DZ> and
+     <See function=Scale3D> to obtain a transformation matrix
+     for the most common transforms.
+
+     Parameters:
+
+     <LI=<I=V> is the normal vector to be transformed.>
+     <LI=<I=T> is the transformation matrix.>
+  }
+  function TransformNormalVector3D(const N: TVector3D; const T: TTransf3D): TVector3D;
+  {: This function transforms a rectangle by using a
+     transformation matrix. The first corner and the second
+     corner of the rectangle are transformed.
+
+     Use <See function=Translate3D>, <See function=Rotate3DX>,
+     <See function=Rotate3DY>, <See function=Rotate3DZ> and
+     <See function=Scale3D> to obtain a transformation matrix for
+     the most common transforms.
+
+     Parameters:
+
+     <LI=<I=R> is the rectangle to be transformed.>
+     <LI=<I=T> is the transformation matrix.>
+  }
+  function TransformRect3D(const R: TRect3D; const T: TTransf3D): TRect3D;
+  {: This function transforms a bounding box by using a
+     transformation matrix. The resulting rectangle is a the
+     bounding box that fully contains the passed rectangle.
+
+     Use <See function=Translate3D>, <See function=Rotate3DX>,
+     <See function=Rotate3DY>, <See function=Rotate3DZ> and
+     <See function=Scale3D> to obtain a transformation matrix for
+     the most common transforms.
+
+     Parameters:
+
+     <LI=<I=R> is the rectangle to be transformed.>
+     <LI=<I=T> is the transformation matrix.>
+  }
+  function TransformBoundingBox3D(Box: TRect3D; const Transf: TTransf3D): TRect3D;
+  {: This function returns a transformation matrix that
+     correspond to a 3D translation.
+
+     Parameters:
+
+     <LI=<I=Tx> is the translation among the X axis.>
+     <LI=<I=Ty> is the translation among the Y axis.>
+     <LI=<I=Tz> is the translation among the Y axis.>
+  }
+  function Translate3D(const Tx, Ty, Tz: TRealType): TTransf3D;
+  {: This function returns a transformation matrix that
+     correspond to a 3D rotation along the X axis.
+
+     The center of rotation is in (0, 0, 0). To rotate along a
+     point (px, py, pz), concatenate the following matrixes:
+
+     <Code=
+      Translate(-px, -py, -pz) -> Rotate(A) -> Translate(px, py, pz)
+     >
+
+     Parameters:
+
+     <LI=<I=R> is the angle of rotation in radiants.>
+  }
+  function Rotate3DX(const R: TRealType): TTransf3D;
+  {: This function returns a transformation matrix that
+     correspond to a 3D rotation along the Y axis.
+
+     The center of rotation is in (0, 0, 0). To rotate along a
+     point (px, py, pz), concatenate the following matrixes:
+
+     <Code=
+      Translate(-px, -py, -pz) -> Rotate(A) -> Translate(px, py, pz)
+     >
+
+     Parameters:
+
+     <LI=<I=R> is the angle of rotation in radiants.>
+  }
+  function Rotate3DY(const R: TRealType): TTransf3D;
+  {: This function returns a transformation matrix that
+     correspond to a 3D rotation along the Z axis.
+
+     The center of rotation is in (0, 0, 0). To rotate along a
+     point (px, py, pz), concatenate the following matrixes:
+
+     <Code=
+      Translate(-px, -py, -pz) -> Rotate(A) -> Translate(px, py, pz)
+     >
+
+     Parameters:
+
+     <LI=<I=R> is the angle of rotation in radiants.>
+  }
+  function Rotate3DZ(const R: TRealType): TTransf3D;
+  {: This function returns a transformation matrix that
+     correspond to a 3D rotation along an axis.
+
+     Parameters:
+
+     <LI=<I=Center> is the center of rotation>
+     <LI=<I=Axis> is the axis of rotation>
+     <LI=<I=Angle> is the angle of rotation in radiants.>
+  }
+  function RotateOnAxis3D(const Center: TPoint3D; const Axis: TVector3D; const Angle: TRealType): TTransf3D;
+  {: This function returns a transformation matrix that
+     correspond to a 3D scaling.
+
+     Parameters:
+
+     <LI=<I=Sx> is the scaling among the X axis.>
+     <LI=<I=Sy> is the scaling among the Y axis.>
+     <LI=<I=Sz> is the scaling among the Z axis.>
+  }
+  function Scale3D(const Sx, Sy, Sz: TRealType): TTransf3D;
+  {: This function returns a matrix that transform the
+     world coordinate system in the view plane coordinate system.
+
+     Parameters:
+
+     <LI=<I=VRP> is the origin of the view plane coordinate system>
+     <LI=<I=VPN> is the normal direction of the view plane>
+     <LI=<I=VUP> is the up direction of the projection plane>
+  }
+  function ViewOrientationTransform3D(const VRP: TPoint3D; const VPN, VUP: TVector3D): TTransf3D;
+  {: This function returns a transformation matrix that may be
+     used to project and normalize points in a parallel projection view.
+
+     Parameters:
+
+     <LI=<I=ViewWindow> is the window on the projection plane>
+     <LI=<I=F> is the front clipping plane (referenced to the
+      positive normal direction)>
+     <LI=<I=B> is the back clipping plane (referenced to the
+      positive normal direction)>
+  }
+  function ParallelViewNormalization3D(ViewWindow: TRect2D; const F, B: TRealType): TTransf3D;
+  {: This function returns a transformation matrix that may be
+     used to project and normalize points in a perspective projection view.
+
+     Parameters:
+
+     <LI=<I=ViewWindow> is the window on the projection plane that will be
+      visualized on the screen>
+     <LI=<I=PlaneDistance> is the distance from the projection plane and
+      the center of projection>
+     <LI=<I=F> is the front clipping plane (referenced to
+      the positive normal direction)>
+     <LI=<I=B> is the back clipping plane (referenced to the
+      positive normal direction)>
+  }
+  function PerspectiveViewNormalization3D(ViewWindow: TRect2D; const PlaneDistance, F, B: TRealType): TTransf3D;
+  {: This function returns the vector in the opposite direction
+     specified by <I=V>.
+
+     The result will be <I=(-V.X, -V.Y, -V.Z)>.
+
+     Parameters:
+
+     <LI=<I=V> is a vector>
+  }
+  function Reflect3D(const V: TVector3D): TVector3D;
+  {: This function returns the cross product of two vectors.
+
+     This function may be used to obtain a vector that is
+     perpendicular to the plane defined by <I=V1> and <I=V2>.
+  }
+  function CrossProd3D(const V1, V2: TVector3D): TVector3D;
+  {: This function returns the dot product of two vectors. The
+     resulting value is given by <I=a.X*b.X+a.Y*b.Y+a.Z*b.Z>.
+
+     If the vectors are versors, then the result value is the
+     coseno of the angle beetwen the versors.
+
+     Parameters:
+
+     <LI=<I=A> is the first vector>
+     <LI=<I=B> is the second vector>
+  }
+  function DotProduct3D(const V1, V2: TVector3D): TRealType;
+  {: This function returns the distance beetwen two points.
+
+     The resulting value is always positive.
+
+     Parameters:
+
+     <LI=<I=P1> is the first point>
+     <LI=<I=P2> is the second point>
+  }
+  function PointDistance3D(const P1, P2: TPoint3D): TRealType;
+  {: This procedure may be used to apply an ortogonal contrain
+     to a point.
+
+     The parameter <I=CurrPt> is modified so that the ray
+     from <I=LastPt> to <I=CurrPt> is parallel to the
+     axis X or Y. The new <I=CurrPt> will be on that ray,
+     and the ray will be parallel to the axis that leads to
+     the greter lenght on the ray.
+
+     The constrain is always in 2D coordinates, and so you need
+     to specify the plane of the 2D coordinates system.
+
+     Parameters:
+
+     <LI=<I=LastPt> is the reference point>
+     <LI=<I=CurrPt> is the point to be constrained.>
+     <LI=<I=PlaneOrigin> is the origin of the 2D reference plane>
+     <LI=<I=PlaneNormal> is the normal direction of the 2D
+      reference plane>
+     <LI=<I=PlaneUP> is the up direction (Y axis) of the 2D
+      reference plane.>
+  }
+  procedure MakeOrto3D(LastPt: TPoint3D; var CurrPt: TPoint3D; PlaneOrigin: TPoint3D; PlaneNormal, PlaneUP: TVector3D);
+  {: This function set the <I=handle rule> for the computation
+     of normals.
+
+     The rule will affect the function <See function=GetVectNormal>
+     and is a normal setting.
+
+     See also <See Type=THandleRule>.
+  }
+  procedure SetHandleRuleForNormals(const HRule: THandleRule);
+  {: This function returns the current <I=handle rule> setting
+     for the computation of normals.
+
+     See also <See Type=THandleRule>.
+  }
+  function  GetHandleRuleForNormals: THandleRule;
+  {: This function returns the normal direction of a set of
+     points.
+
+     If the set of points is planar (that is all the points
+     in the set lie on a plane) the function returns the
+     normal direction of that plane.
+
+     Otherwise a plane is constructed from the set of points
+     and its normal direction is returned. The constructed
+     plane is the plane that minimize the summation of the
+     distances of the points from it.
+
+     Parameters:
+
+     <LI=<I=Vect> is the reference polyline. It is a PVectPoints3D
+         and is returned by <See Property=TPointsSet3D@PointsReference> >
+     <LI=<I=Count> is the number of points of the polyline >
+
+     See also <See function=SetHandleRuleForNormals> and
+     <See Type=THandleRule>.
+  }
+  function GetVectNormal(const Vect: Pointer; Count: Integer): TVector3D;
+  {: This function returns a 3D point that is the extrusion
+     of another point along a direction. The resulting point is an ordinary point.
+
+     Parameters:
+
+     <LI=<I=Pt> is the point to be extruded>
+     <LI=<I=Dir> is the extrusion direction>
+     <LI=<I=Size> is the extrusion length. The resulting point
+      will have a distance from <I=Pt> equal to size.>
+  }
+  function ExtrudePoint3D(Pt: TPoint3D; const Dir: TVector3D; Size: TRealType): TPoint3D;
+  {: This function forces a 3D point on a plane and returns it.
+     The returning point is in 2D plane reference coordinates
+     (with W=1.0).
+
+     The point is projected on the plane along a ray that
+     originates from the point and that is parallel to the
+     given ray vector (<I=CastDir>).
+
+     Parameters:
+
+     <LI=<I=WPt> is the world point>
+     <LI=<I=CastDir> is the ray vector (projector) used to
+      project <I=WPt> on the plane>
+     <LI=<I=PlaneNorm> is the normal direction of the plane>
+     <LI=<I=PlaneOrg> is the origin of the coordinate system
+      of the plane.>
+     <LI=<I=PlaneUp> is the UP direction of the plane>
+  }
+  function WorldPointToPlane3D(const WPt: TPoint3D; const CastDir, PlaneNorm, PlaneUP: TVector3D; const PlaneOrg: TPoint3D): TPoint2D;
+  {: This function returns a 3D point that is the equivalent
+     of a 2D point on a plane.
+
+     Parameters:
+
+     <LI=<I=PPt> is the plane point in plane reference coordinates>
+     <LI=<I=PlaneNorm> is the normal direction of the plane>
+     <LI=<I=PlaneOrg> is the origin point of the plane.>
+     <LI=<I=PlaneUp> is the UP direction of the plane>
+  }
+  function PlanePointToWorld3D(const PPt: TPoint2D; const PlaneNorm, PlaneUP: TVector3D; const PlaneOrg: TPoint3D): TPoint3D;
+  {: This function forces a 3D point on a plane and returns it.
+
+     The point is projected on the plane along a ray that
+     originates from the point and that is parallel to the given
+     ray vector (<I=CastDir>).
+
+     Parameters:
+
+     <LI=<I=WPt> is the world point>
+     <LI=<I=CastDir> is the ray vector (projector) used to
+      project WPt on the plane>
+     <LI=<I=PlaneNorm> is the normal direction of the plane>
+     <LI=<I=PlaneOrg> is the origin point of the plane.>
+  }
+  function CastPointOnPlane3D(const WPt: TPoint3D; const CastDir, PlaneNorm: TVector3D; const PlaneOrg: TPoint3D): TPoint3D;
+  {: This function returns the <I=V> vector forced on the plane
+     identified by the normal <I=PlaneNorm>.
+
+     Parameters:
+
+     <LI=<I=V> is the vector to project>
+     <LI=<I=PlaneNorm> is the normal direction of the plane>
+  }
+  function CastVectorOnPlane3D(const V: TVector3D; const PlaneNorm: TVector3D): TVector3D;
+  {: This procedure returns the parameters of the plane (that may
+     be used for <See function=ViewOrientationTransform3D>) that
+     rapresent the projection plane for a visualization system
+     with the given camera parameters.
+
+     Parameters:
+
+     <LI=<I=CameraPos> is the camera position of the
+      visualization system.>
+     <LI=<I=CameraView> is the camera view point of the
+      visualization system.>
+     <LI=<I=CameraUp> is the camera up direction of the
+      visualization system.>
+     <LI=<I=PlaneNorm> is the normal direction of the projection
+      plane>
+     <LI=<I=PlaneUp> is the UP direction of the projection plane>
+     <LI=<I=PlaneOrg> is the origin point of the projection plane.>
+  }
+  procedure ViewPlane(const CameraPos, CameraView: TPoint3D; CameraUp: TVector3D; var PlaneNorm, PlaneUp: TVector3D; var PlaneOrg: TPoint3D);
+  {: This procedure returns the coefficients fot the plane equation
+     <I=A*X+B*Y+C*Z=D>.
+
+     The plane is identified by a point on it and its normal
+     direction.
+
+     Parameters:
+
+     <LI=<I=A, B, C, D> will be the coefficients for the plane
+      equation>
+     <LI=<I=Normal> is the normal direction of the plane>
+     <LI=<I=Org> is a point on the plane>
+  }
+  procedure NormalPtPlaneToEq3D(const Normal: TVector3D; const Pt: TPoint3D; var A, B, C, D: TRealType);
+  {: This procedure returns a point and a vector that are the
+     coordinate system origin and the normal direction of the
+     plane with equation <LI=A*X+B*Y+C*Z=D>.
+
+     Parameters:
+
+     <LI=<I=A, B, C, D> are the parameters of the plane equation>
+     <LI=<I=Normal> will be the normal direction of the plane>
+     <LI=<I=Org> will be a point on the plane>
+  }
+  procedure PlaneEqToNormalPt3D(A, B, C, D: TRealType; var Normal: TVector3D; var Org: TPoint3D);
+  {: This function clip a segment against the normalized
+     clipping box. This box is axis alligned and its extensions
+     are from the point (-1, -1, -1) to the point (1, 1, 0).
+
+     The function returns the clipping result code and change
+     <I=Pt1> and <I=Pt2> on the base of the clipping.
+
+     The resulting value can be one of the following:
+
+     <LI=<I=[ccNotVisible]> if the segment is not visible in
+      the clipping region.>
+     <LI=<I=[ccVisible]> if the segment is fully contained in
+      the clipping region.>
+     <LI=<I=[ccFirstEdge]> if the first point of segment was
+      clipped.>
+     <LI=<I=[ccSecondEdge]> if the second point of segment was
+      clipped.>
+     <LI=<I=[ccFirstEdge, ccSecondEdge]> if the bothe point of
+      segment were clipped.>
+
+     Parameters:
+
+     <LI=<I=Pt1> is the first point of the segment (in normalized
+      coordinates).>
+     <LI=<I=Pt2> is the second point of the segment (in normalized
+      coordinates).>
+  }
+  function ClipLine3D(var Pt1, Pt2: TPoint3D): TClipResult;
+  {: This function returns <B=True> if the point <I=P> is near
+     to the point <I=RP> for a distance less than <I=Aperture>.
+
+     The method considers the normalized and projected
+     coordinates of the points and then uses a 2D algorithm.
+
+     Parameters:
+
+     <LI=<I=RP> is the reference point in world coordinates>
+     <LI=<I=P> is the testing point in normalized coordinates
+      (obtained previously by means of NT).>
+     <LI=<I=Aperture> is the reference distance>
+     <LI=<I=Dist> will contains the real distance of <I=P> from
+      <I=RP>. If the function returns False, Dist will be set to
+      MaxCoord.>
+     <LI=<I=NT> is the normalization matrix>
+  }
+  function NearPoint3D(RP, P: TPoint3D; const Aperture: TRealType;
+                       var Dist: TRealType; const NT: TTransf3D): Boolean;
+  {: This function returns a <I=position code> that rapresents
+     the position of a point respect to the given polyline.
+
+     The result value is one of the following:
+
+     <LI=<I=PICK_NOOBJECT> if the point <I=P> isn't near to the
+      polyline>
+     <LI=<I=PICK_ONOBJECT> if the point <I=P> is near to the
+      passed polyline by a distance less than <I=Aperture>.
+
+     Parameters:
+
+     <LI=<I=Vect> is the reference polyline (in world
+                  coordinate system). It is a PVectPoints3D
+         and is returned by <See Property=TPointsSet3D@PointsReference> >
+     <LI=<I=Count> is the number of points of the polyline >
+     <LI=<I=P> is the testing point in normalized coordinates
+      (obtained previously by means of NT)>
+     <LI=<I=Dist> will contains the real distance of <I=P> from
+      the polyline. If the function returns <I=PICK_NOOBJECT>,
+      <I=Dist> will be set to MaxCoord.>
+     <LI=<I=Aperture> is the reference distance>
+     <LI=<I=NT> is the normalization matrix. The polyline is
+      transformed by this matrix before the testing.>
+     <LI=<I=MustClose>. If it is <B=True> the polyline will
+      be closed (if not already).>
+  }
+  function IsPointOnPolyLine3D(const Vect: Pointer; Count: Integer;
+                               const P: TPoint3D; var Dist: TRealType;
+                               const Aperture: TRealType; const NT: TTransf3D; const MustClose: Boolean): Integer;
+  {: This function returns a <I=position code> that rapresents
+     the position of a point respect to the given line.
+
+     The result value is one of the following:
+
+     <LI=<I=PICK_NOOBJECT> if the point <I=P> isn't near to the
+      segment>
+     <LI=<I=PICK_ONOBJECT> if the point <I=P> is near to the
+      passed segment by a distance less than <I=Aperture>.>
+
+     Parameters:
+
+     <LI=<I=A> is the first point of the segment (in world
+      coordinates)>
+     <LI=<I=B> is the second point of the segment (in world
+      coordinates)>
+     <LI=<I=P> is the testing point in normalized coordinates
+      (obtained previously with NT)>
+     <LI=<I=Dist> will contains the real distance of <I=P> from
+      the segement. If the function returns <I=PICK_NOOBJECT>,
+      <I=Dist> will be set to <I=MaxCoord>.>
+     <LI=<I=Aperture> is the reference distance>
+     <LI=<I=NT> is the normalization matrix. The polyline is
+      transformed by this matrix before the testing.>
+  }
+  function IsPointOnLine3D(const A, B, P: TPoint3D; var Dist: TRealType;
+                           const Aperture: TRealType; const NT: TTransf3D): Integer;
+  {: This function returns <B=True> if the testing point is
+     inside the reference rectangle.
+
+     The function works on both ordinary and non ordinary points,
+     for the function makes the points ordinary (W=1.0) before do
+     the test.
+
+     Parameters:
+
+     <LI=<I=Pt> is the testing point>
+     <LI=<I=Box> is the axis alligned rectangle>
+  }
+  function IsPointInBox3D(const Pt: TPoint3D; const Box: TRect3D): Boolean;
+  {: This function returns the smallest axis alligned rectangle
+     that contains the given points and the given rectangle.
+
+     The function works on both ordinary and non ordinary
+     points, for the function makes the points ordinary (W=1.0)
+     before do its job.
+
+     Parameters:
+
+     <LI=<I=Pt> is the point>
+     <LI=<I=Box> is the axis alligned rectangle>
+  }
+  function PointOutBox3D(Pt: TPoint3D; Box: TRect3D): TRect3D;
+  {: This function returns <B=True> if Box1 is completely or
+     partially contained in Box2.
+
+     The function works on both ordinary and non ordinary
+     points, for the function makes the points ordinary (W=1.0)
+     before do its job.
+
+     Parameters:
+
+     <LI=<I=Box1> is the first axis alligned rectangle>
+     <LI=<I=Box2> is the second axis alligned rectangle>
+  }
+  function IsBoxInBox3D(Box1, Box2: TRect3D): Boolean;
+  {: This function returns <B=True> if <I=Box2> is fully
+     contained into <I=Box2>.
+
+     The function works on both ordinary and non ordinary points,
+     for the function makes the points ordinary (W=1.0) before do
+     its job.
+
+     Parameters:
+
+     <LI=<I=Box1> is the first axis alligned rectangle>
+     <LI=<I=Box2> is the second axis alligned rectangle>
+  }
+  function IsBoxAllInBox3D(Box1, Box2: TRect3D): Boolean;
+  {: This function returns the smallest axis alligned rectangle
+     that contains the given rectangles.
+
+     The function works on both ordinary and non ordinary points,
+     for the function makes the points ordinary (W=1.0) before do
+     its job.
+
+     Parameters:
+
+     <LI=<I=Box1> is the first axis alligned rectangle>
+     <LI=<I=Box2> is the second axis alligned rectangle>
+  }
+  function BoxOutBox3D(Box1, Box2: TRect3D): TRect3D;
+  function BoxFilling3D(Box1, Box2: TRect3D): Word;
+  {: This function returns the 2D axis alligned rectangle that
+     fully contains the projection of a 3D box on a plane.
+
+     The resulting rect is an ordinary one.
+
+     Parameters:
+
+     <LI=<I=Box> is the 3D rectangle to be projected>
+     <LI=<I=WorldToPlane> is a transformation that maps the
+      world reference system to the plane reference system (the
+      <See function=ViewOrientationTransform3D> may be used to get
+      this parameter).>
+  }
+  function GetBox2DExtension3D(Box: TRect3D; const WorldToPlane: TTransf3D): TRect2D;
+  {: This function returns <B=True> if the testing point is
+     inside the normalized clipping rectangle. This box is axis
+     alligned and its extensions are from (-1, -1, -1) to
+     (1, 1, 0).
+
+     The function works on both ordinary and non ordinary points,
+     for the function makes the points ordinary (W=1.0) before do
+     the test.
+
+     Parameters:
+
+     <LI=<I=Pt> is the testing point in normalized coordinates>
+  }
+  function IsPointInBoxNRC3D(const Pt: TPoint3D): Boolean;
+  {: This function returns <B=True> if <I=Box> is fully
+     contained into the normalized clipping rectangle. This box
+     is axis alligned and its extensions are from (-1, -1, -1)
+     to (1, 1, 0).
+
+     The function works on both ordinary and non ordinary points,
+     for the function makes the points ordinary (W=1.0) before do
+     its job.
+
+     Parameters:
+
+     <LI=<I=Box> is axis alligned rectangle already normalized
+     (and ordered)>
+  }
+  function IsVisibleBoxNRC3D(Box: TRect3D): Boolean;
+  {: This function returns <B=True> if <I=Box> is completely or
+     partially contained in the normalized clipping rectangle.
+     This box is axis alligned and its extensions are from
+     (-1, -1, -1) to (1, 1, 0).
+
+     The function works on both ordinary and non ordinary points,
+     for the function makes the points ordinary (W=1.0) before do
+     its job.
+
+     Parameters:
+
+     <LI=<I=Box> is axis alligned rectangle already normalized
+      (and ordered)>
+  }
+  function IsBoxAllInBoxNRC3D(Box: TRect3D): Boolean;
+  function IsBoxAllInFrontNRC3D(Box: TRect3D): Boolean;
+  function BoxFillingNRC3D(Box: TRect3D): Word;
+
   { Drawing functions
     Vect deve essere di tipo PVectPoints2D, Count è il numero di punti. }
   procedure Draw2DSubSetAsPolygon(const Vect: Pointer; Count: Integer;
@@ -6296,6 +9262,60 @@ type
   }
   procedure DrawBoundingBox2D(const Cnv: TDecorativeCanvas; Box, Clip: TRect2D; const S: TTransf2D);
 
+  { Vect deve essere di tipo PVectPoints3D, Count è il numero di punti. }
+  procedure Draw3DSubSetAsPolyline(const Vect: Pointer; Count: Integer;
+                                   const Cnv: TDecorativeCanvas;
+                                   const {%H-}Extent: TRect3D;
+                                   const NT: TTransf3D;
+                                   const VT: TTransf2D;
+                                   const StartIdx, EndIdx: Integer;
+                                   const ToBeClosed: Boolean);
+  {: This function can be used to draw a line onto a canvas.
+
+     The line being drawed is normalized with <I=NT>, then it
+     is clipped within the specified region and mapped on the
+     screen with the matrix <I=VT>.
+
+     Parameters:
+
+     <LI=<I=Cnv> is the canvas on which the line is drawed.>
+     <LI=<I=P1> is the first point of the line.>
+     <LI=<I=P2> is the second point of the line.>
+     <LI=<I=NT> is the normalization matrix used to project and
+      normalize the line to the screen. (See
+      <See Method=TCADViewport3D@ViewNormalization>.
+     <LI=<I=VT> is the mapping matrix used to map the clipped line to the screen.>
+  }
+  function DrawLine3D(const Cnv: TDecorativeCanvas; P1, P2: TPoint3D; const NT: TTransf3D; const VT: TTransf2D): Boolean;
+  {: This function can be used to draw a bounding box onto a
+     canvas.
+
+     It draws a box with hidden lines removed.
+
+     The box being drawed is first transformed by <I=NT>. This
+     transformation keep the bounding box nature of the
+     rectangle, so the normalized box has the edges parallel
+     to the axis of the world.
+
+     After that the box is clipped to the canonical bounding
+     box, it is mapped onto the screen and clipped against
+     the clipping region.
+
+     Parameters:
+
+     <LI=<I=Cnv> is the canvas on which the rectangle is drawed.>
+     <LI=<I=VRP> is the view reference point (at the
+      center of the current viewport) used to remove the hidden
+      lines.>
+     <LI=<I=Box> is the rectangle to be drawed.>
+     <LI=<I=NT> is the normalization matrix used
+      to project and normalize the line to the screen.
+      (See <See Method=TCADViewport3D@ViewNormalization>).>
+     <LI=<I=VT> is the mapping matrix used to map the clipped line
+     to the screen.>
+  }
+  procedure DrawBoundingBox3D(const Cnv: TDecorativeCanvas; const {%H-}VRP: TPoint3D; Box: TRect3D; const NT: TTransf3D; const VT: TTransf2D);
+
   { The below class utilities are for graphics object registration. }
   {: This procedure resets the list of graphic object registrations.
 
@@ -6358,7 +9378,7 @@ const
   {: This constant contains the version number of the library
      used as drawing file's header.
   }
-  CADSysVersion: TCADVersion = 'CAD422';
+  CADSysVersion: TCADVersion = 'CAD423';
   {: This constant is used as <I=drawing mode> value for
      the <See Property=TCADViewport@DrawMode>.
   }
@@ -6396,6 +9416,36 @@ const
      <B=Note>: Your drawing shape classess must understands these
      flags and behaves accordingly.
   }
+
+  DRAWMODE_BACKFACECULLING = 4;
+  {: This constant is used as <I=drawing mode> value for
+     the <See Property=TCADViewport@DrawMode>.
+
+     The <I=draw mode> values used as toogle flags. If this
+     value is present in the DrawMode property the front
+     facing objects will be drawed in green and the back
+     facing objects will be drawed in red (only for 3D viewports).
+
+     The font facing check is <B=True> if the ray from the
+     camera position to the view point is opposite to the face
+     normal (ie you are looking the font face).
+
+     <B=Note>: Your drawing shape classess must understands these
+     flags and behaves accordingly.
+  }
+  DRAWMODE_SHOWORIENTATION = 8;
+  {: This constant is used as <I=drawing mode> value for
+     the <See Property=TCADViewport@DrawMode>.
+
+     The <I=draw mode> values used as toogle flags. If this
+     value is present in the DrawMode property only the
+     bounding boxes of the objects are drawed.
+
+     <B=Note>: Your drawing shape classess must understands these
+     flags and behaves accordingly.
+  }
+  DRAWMODE_ONLYBOUNDINGBOX = 16;
+
   {: This constant is used as <I=drawing mode> value for
      the <See Property=TCADViewport@DrawMode>.
 
@@ -6426,7 +9476,7 @@ const
 
 Implementation
 
-uses Math, Dialogs, Forms;
+uses Dialogs, Forms, CS4Shapes;
 
 type
   TPaintingThread = class(TThread)
@@ -6442,7 +9492,7 @@ type
     procedure Execute; override;
   end;
 
-  TGraphicClassRegistered = array[0..512] of TGraphicObjectClass;
+//  TGraphicClassRegistered = ;
 
   PObjBlock = ^TObjBlock;
 
@@ -6452,7 +9502,8 @@ type
   end;
 
 var
-  GraphicObjectsRegistered: TGraphicClassRegistered;
+  GraphicObjectsRegistered: array[0..512] of TGraphicObjectClass;
+  _HandleRuleForNormal: THandleRule = hrRightHand;
 
 // 2D Clipping functions.
 
@@ -6691,7 +9742,12 @@ begin
   Result := (P1.X = P2.X) and (P1.Y = P2.Y);
 end;
 
-function IsSameVector2D(const V1, V2: TVector2D): Boolean;
+function IsSameVector2D(const V1, V2: TVector2D; const Digits: TRoundToRange): Boolean; overload;
+begin
+  Result := (RoundTo(V1.X, Digits) = RoundTo(V2.X, Digits)) and (RoundTo(V1.Y, Digits) = RoundTo(V2.Y, Digits));
+end;
+
+function IsSameVector2D(const V1, V2: TVector2D): Boolean; overload;
 begin
   Result := (V1.X = V2.X) and (V1.Y = V2.Y);
 end;
@@ -6865,6 +9921,234 @@ begin
   Result.Top := R.Top + Marg;
   Result.W1 := 1.0;
   Result.W2 := 1.0;
+end;
+
+function Point3D(const X, Y, Z: TRealType): TPoint3D;
+begin
+  Result.X := X;
+  Result.Y := Y;
+  Result.Z := Z;
+  Result.W := 1.0;
+end;
+
+function Rect3D(const Left, Bottom, Front, Right, Top, Back: TRealType): TRect3D;
+begin
+  Result.FirstEdge := Point3D(Left, Bottom, Front);
+  Result.SecondEdge := Point3D(Right, Top, Back);
+end;
+
+function VectorLength3D(V: TVector3D): TRealType;
+begin
+  Result := Sqrt(V.X * V.X + V.Y * V.Y + V.Z * V.Z);
+end;
+
+function Versor3D(const X, Y, Z: TRealType): TVector3D;
+begin
+  Result.X := X;
+  Result.Y := Y;
+  Result.Z := Z;
+  Result := NormalizeVector3D(Result);
+end;
+
+function NormalizeVector3D(const V: TVector3D): TVector3D;
+var
+  Modul: TRealType;
+begin
+  Modul := VectorLength3D(V);
+  Result := V;
+  if (Modul <> 1.0) and (Modul <> 0.0) then
+   begin
+     Result.X := V.X / Modul;
+     Result.Y := V.Y / Modul;
+     Result.Z := V.Z / Modul;
+   end;
+end;
+
+function Vector3D(PFrom, PTo: TPoint3D): TVector3D;
+begin
+  if PFrom.W <> PTo.W then
+   begin
+     PFrom := CartesianPoint3D(PFrom);
+     PTo := CartesianPoint3D(PTo);
+   end;
+  Result.X := PTo.X - PFrom.X;
+  Result.Y := PTo.Y - PFrom.Y;
+  Result.Z := PTo.Z - PFrom.Z;
+end;
+
+function ColumnVector3D(const M: TTransf3D; Col: Byte; const V: TVector3D): TTransf3D;
+begin
+  Result := M;
+  Result[1, Col] := V.X;
+  Result[2, Col] := V.Y;
+  Result[3, Col] := V.Z;
+end;
+
+function RowVector3D(const M: TTransf3D; Row: Byte; const V: TVector3D): TTransf3D;
+begin
+  Result := M;
+  Result[Row, 1] := V.X;
+  Result[Row, 2] := V.Y;
+  Result[Row, 3] := V.Z;
+end;
+
+function Direction3D(const PFrom, PTo: TPoint3D): TVector3D;
+begin
+  Result := NormalizeVector3D(Vector3D(PFrom, PTo));
+end;
+
+function Point3DToPoint2D(const P3D: TPoint3D): TPoint2D;
+begin
+  if (P3D.W = 1.0) or (P3D.W = 0.0) then
+   begin
+     Result.X := P3D.X;
+     Result.Y := P3D.Y;
+   end
+  else
+   begin
+     Result.X := P3D.X / P3D.W;
+     Result.Y := P3D.Y / P3D.W;
+   end;
+  Result.W := 1.0;
+end;
+
+function Point2DToPoint3D(const P2D: TPoint2D): TPoint3D;
+begin
+  Result.X := P2D.X;
+  Result.Y := P2D.Y;
+  Result.Z := 0.0;
+  Result.W := P2D.W;
+end;
+
+function Rect3DToRect2D(const R: TRect3D): TRect2D;
+begin
+  Result.FirstEdge := Point3DToPoint2D(R.FirstEdge);
+  Result.SecondEdge := Point3DToPoint2D(R.SecondEdge);
+end;
+
+function Rect2DToRect3D(const R: TRect2D): TRect3D;
+begin
+  Result.FirstEdge := Point3D(R.FirstEdge.X, R.FirstEdge.Y, 0);
+  Result.SecondEdge := Point3D(R.SecondEdge.X, R.SecondEdge.Y, 0);
+end;
+
+function CartesianPoint3D(const P: TPoint3D): TPoint3D;
+begin
+  if (P.W <> 1.0) and (P.W > 1.0E-8) then
+   begin
+     Result.X := P.X / P.W;
+     Result.Y := P.Y / P.W;
+     Result.Z := P.Z / P.W;
+     Result.W := 1.0;
+   end
+  else
+   Result := P;
+end;
+
+function CartesianRect3D(const R: TRect3D): TRect3D;
+begin
+  Result.FirstEdge := CartesianPoint3D(R.FirstEdge);
+  Result.SecondEdge := CartesianPoint3D(R.SecondEdge);
+end;
+
+function ReOrderRect3D(const R: TRect3D): TRect3D;
+begin
+  Result := CartesianRect3D(R);
+  if R.FirstEdge.X > R.SecondEdge.X then
+   begin
+     Result.FirstEdge.X := R.SecondEdge.X;
+     Result.SecondEdge.X := R.FirstEdge.X;
+   end;
+  if R.FirstEdge.Y > R.SecondEdge.Y then
+   begin
+     Result.FirstEdge.Y := R.SecondEdge.Y;
+     Result.SecondEdge.Y := R.FirstEdge.Y;
+   end;
+  if R.FirstEdge.Z > R.SecondEdge.Z then
+   begin
+     Result.FirstEdge.Z := R.SecondEdge.Z;
+     Result.SecondEdge.Z := R.FirstEdge.Z;
+   end;
+end;
+
+function IsSameTransform3D(const T1, T2: TTransf3D): Boolean;
+begin
+  Result := (T1[1, 1] = T2[1, 1])
+            and (T1[1, 2] = T2[1, 2])
+            and (T1[1, 3] = T2[1, 3])
+            and (T1[1, 4] = T2[1, 4])
+            and (T1[2, 1] = T2[2, 1])
+            and (T1[2, 2] = T2[2, 2])
+            and (T1[2, 3] = T2[2, 3])
+            and (T1[2, 4] = T2[2, 4])
+            and (T1[3, 1] = T2[3, 1])
+            and (T1[3, 2] = T2[3, 2])
+            and (T1[3, 3] = T2[3, 3])
+            and (T1[3, 4] = T2[3, 4])
+            and (T1[4, 1] = T2[4, 1])
+            and (T1[4, 2] = T2[4, 2])
+            and (T1[4, 3] = T2[4, 3])
+            and (T1[4, 4] = T2[4, 4]);
+end;
+
+function IsCartesianTransform3D(const T: TTransf3D): Boolean;
+begin
+  Result := (T[1, 4] = 0.0) and (T[2, 4] = 0.0) and (T[3, 4] = 0.0) and (T[4, 4] = 1.0);
+end;
+
+function IsSamePoint3D(P1, P2: TPoint3D): Boolean;
+begin
+  if( P1.W <> P2.W ) then
+   begin
+     P1 := CartesianPoint3D(P1);
+     P2 := CartesianPoint3D(P2);
+   end;
+  Result := (P1.X = P2.X) and (P1.Y = P2.Y) and (P1.Z = P2.Z);
+end;
+
+function IsSameVector3D(const V1, V2: TVector3D; const Digits: TRoundToRange): Boolean; overload;
+begin
+  Result := RoundTo(V1.X, Digits) = RoundTo(V2.X, Digits);
+  Result := Result and (RoundTo(V1.Y, Digits) = RoundTo(V2.Y, Digits));
+  Result := Result and (RoundTo(V1.Z, Digits) = RoundTo(V2.Z, Digits));
+end;
+
+function IsSameVector3D(const V1, V2: TVector3D): Boolean; overload;
+begin
+  Result := V1.X = V2.X;
+  Result := Result and (V1.Y = V2.Y);
+  Result := Result and (V1.Z = V2.Z);
+end;
+
+function EnlargeBoxDelta3D(R: TRect3D; Delta: TRealType): TRect3D;
+begin
+  R := CartesianRect3D(R);
+  Result.FirstEdge.X := R.FirstEdge.X - Delta;
+  Result.SecondEdge.X := R.SecondEdge.X + Delta;
+  Result.FirstEdge.Y := R.FirstEdge.Y - Delta;
+  Result.SecondEdge.Y := R.SecondEdge.Y + Delta;
+  Result.FirstEdge.Z := R.FirstEdge.Z - Delta;
+  Result.SecondEdge.Z := R.SecondEdge.Z + Delta;
+  Result.FirstEdge.W := 1.0;
+  Result.SecondEdge.W := 1.0;
+end;
+
+function EnlargeBoxPerc3D(R: TRect3D; Perc: TRealType): TRect3D;
+var
+  Marg: TRealType;
+begin
+  R := CartesianRect3D(R);
+  Marg := Abs(R.FirstEdge.X - R.SecondEdge.X) * Perc;
+  Result.FirstEdge.X := R.FirstEdge.X - Marg;
+  Result.SecondEdge.X := R.SecondEdge.X + Marg;
+  Marg := Abs(R.FirstEdge.Y - R.SecondEdge.Y) * Perc;
+  Result.FirstEdge.Y := R.FirstEdge.Y - Marg;
+  Result.SecondEdge.Y := R.SecondEdge.Y + Marg;
+  Marg := Abs(R.FirstEdge.Z - R.SecondEdge.Z) * Perc;
+  Result.FirstEdge.Z := R.FirstEdge.Z - Marg;
+  Result.SecondEdge.Z := R.SecondEdge.Z + Marg;
+  Result.FirstEdge.W := 1.0;
+  Result.SecondEdge.W := 1.0;
 end;
 
 function GetVisualTransform2D(var W: TRect2D; const V: TRect;
@@ -7295,6 +10579,7 @@ begin
   P := CartesianPoint2D(P);
   TmpPt1 := CartesianPoint2D(TransformPoint2D(Box.FirstEdge, T));
   TmpPt2 := CartesianPoint2D(TransformPoint2D(Point2D(Box.Left, Box.Top), T));
+  TmpDist := 0;
   if _PointSegmentDistance2D(P, TmpPt1, TmpPt2, TmpDist) and (TmpDist <= Aperture) then
    begin
      Result := PICK_ONOBJECT;
@@ -7381,6 +10666,7 @@ begin
       TmpPt2 := CartesianPoint2D(TransformPoint2D(PVectPoints2D(Vect)^[0], T))
      else
       TmpPt2 := CartesianPoint2D(TransformPoint2D(PVectPoints2D(Vect)^[Cont], T));
+     TmpDist := 0;
      if _PointSegmentDistance2D(P, TmpPt1, TmpPt2, TmpDist) and (TmpDist <= MinDist) then
       begin
         Result := PICK_ONOBJECT;
@@ -7401,6 +10687,7 @@ begin
   P := CartesianPoint2D(P);
   A := CartesianPoint2D(TransformPoint2D(A, T));
   B := CartesianPoint2D(TransformPoint2D(B, T));
+  TmpDist := 0;
   if _PointSegmentDistance2D(P, A, B, TmpDist) and (TmpDist <= Aperture) then
    begin
      Result := PICK_ONOBJECT;
@@ -7439,6 +10726,7 @@ begin
       TmpPt2 := CartesianPoint2D(TransformPoint2D(PVectPoints2D(Vect)^[0], T))
      else
       TmpPt2 := CartesianPoint2D(TransformPoint2D(PVectPoints2D(Vect)^[Cont], T));
+     TmpDist := 0;
      if _PointSegmentDistance2D(P, TmpPt1, TmpPt2, TmpDist) and (TmpDist <= Dist) then
       begin
         if TmpDist < Aperture then
@@ -7579,6 +10867,1080 @@ begin
       if Result = [] then
        Result := [ccVisible];
     end;
+end;
+
+function MultiplyTransform3D(const M1, M2: TTransf3D): TTransf3D;
+var
+  B1, B2: Boolean;
+begin
+  B1 := (M1[1, 4] = 0.0) and (M1[2, 4] = 0.0) and (M1[3, 4] = 0.0) and (M1[4, 4] = 1.0);
+  B2 := (M2[1, 4] = 0.0) and (M2[2, 4] = 0.0) and (M2[3, 4] = 0.0) and (M2[4, 4] = 1.0);
+  if B1 and B2 then
+   begin
+     Result[1, 1] := M1[1, 1] * M2[1, 1] + M1[1, 2] * M2[2, 1] + M1[1, 3] * M2[3, 1];
+     Result[1, 2] := M1[1, 1] * M2[1, 2] + M1[1, 2] * M2[2, 2] + M1[1, 3] * M2[3, 2];
+     Result[1, 3] := M1[1, 1] * M2[1, 3] + M1[1, 2] * M2[2, 3] + M1[1, 3] * M2[3, 3];
+     Result[1, 4] := 0.0;
+
+     Result[2, 1] := M1[2, 1] * M2[1, 1] + M1[2, 2] * M2[2, 1] + M1[2, 3] * M2[3, 1];
+     Result[2, 2] := M1[2, 1] * M2[1, 2] + M1[2, 2] * M2[2, 2] + M1[2, 3] * M2[3, 2];
+     Result[2, 3] := M1[2, 1] * M2[1, 3] + M1[2, 2] * M2[2, 3] + M1[2, 3] * M2[3, 3];
+     Result[2, 4] := 0.0;
+
+     Result[3, 1] := M1[3, 1] * M2[1, 1] + M1[3, 2] * M2[2, 1] + M1[3, 3] * M2[3, 1];
+     Result[3, 2] := M1[3, 1] * M2[1, 2] + M1[3, 2] * M2[2, 2] + M1[3, 3] * M2[3, 2];
+     Result[3, 3] := M1[3, 1] * M2[1, 3] + M1[3, 2] * M2[2, 3] + M1[3, 3] * M2[3, 3];
+     Result[3, 4] := 0.0;
+
+     Result[4, 1] := M1[4, 1] * M2[1, 1] + M1[4, 2] * M2[2, 1] + M1[4, 3] * M2[3, 1] + M2[4, 1];
+     Result[4, 2] := M1[4, 1] * M2[1, 2] + M1[4, 2] * M2[2, 2] + M1[4, 3] * M2[3, 2] + M2[4, 2];
+     Result[4, 3] := M1[4, 1] * M2[1, 3] + M1[4, 2] * M2[2, 3] + M1[4, 3] * M2[3, 3] + M2[4, 3];
+     Result[4, 4] := 1.0;
+   end
+  else if B1 and (not B2) then
+   begin
+     Result[1, 1] := M1[1, 1] * M2[1, 1] + M1[1, 2] * M2[2, 1] + M1[1, 3] * M2[3, 1];
+     Result[1, 2] := M1[1, 1] * M2[1, 2] + M1[1, 2] * M2[2, 2] + M1[1, 3] * M2[3, 2];
+     Result[1, 3] := M1[1, 1] * M2[1, 3] + M1[1, 2] * M2[2, 3] + M1[1, 3] * M2[3, 3];
+     Result[1, 4] := M1[1, 1] * M2[1, 4] + M1[1, 2] * M2[2, 4] + M1[1, 3] * M2[3, 4];
+
+     Result[2, 1] := M1[2, 1] * M2[1, 1] + M1[2, 2] * M2[2, 1] + M1[2, 3] * M2[3, 1];
+     Result[2, 2] := M1[2, 1] * M2[1, 2] + M1[2, 2] * M2[2, 2] + M1[2, 3] * M2[3, 2];
+     Result[2, 3] := M1[2, 1] * M2[1, 3] + M1[2, 2] * M2[2, 3] + M1[2, 3] * M2[3, 3];
+     Result[2, 4] := M1[2, 1] * M2[1, 4] + M1[2, 2] * M2[2, 4] + M1[2, 3] * M2[3, 4];
+
+     Result[3, 1] := M1[3, 1] * M2[1, 1] + M1[3, 2] * M2[2, 1] + M1[3, 3] * M2[3, 1];
+     Result[3, 2] := M1[3, 1] * M2[1, 2] + M1[3, 2] * M2[2, 2] + M1[3, 3] * M2[3, 2];
+     Result[3, 3] := M1[3, 1] * M2[1, 3] + M1[3, 2] * M2[2, 3] + M1[3, 3] * M2[3, 3];
+     Result[3, 4] := M1[3, 1] * M2[1, 4] + M1[3, 2] * M2[2, 4] + M1[3, 3] * M2[3, 4];
+
+     Result[4, 1] := M1[4, 1] * M2[1, 1] + M1[4, 2] * M2[2, 1] + M1[4, 3] * M2[3, 1] + M2[4, 1];
+     Result[4, 2] := M1[4, 1] * M2[1, 2] + M1[4, 2] * M2[2, 2] + M1[4, 3] * M2[3, 2] + M2[4, 2];
+     Result[4, 3] := M1[4, 1] * M2[1, 3] + M1[4, 2] * M2[2, 3] + M1[4, 3] * M2[3, 3] + M2[4, 3];
+     Result[4, 4] := M1[4, 1] * M2[1, 4] + M1[4, 2] * M2[2, 4] + M1[4, 3] * M2[3, 4] + M2[4, 4];
+   end
+  else if (not B1) and B2 then
+   begin
+     Result[1, 1] := M1[1, 1] * M2[1, 1] + M1[1, 2] * M2[2, 1] + M1[1, 3] * M2[3, 1] + M1[1, 4] * M2[4, 1];
+     Result[1, 2] := M1[1, 1] * M2[1, 2] + M1[1, 2] * M2[2, 2] + M1[1, 3] * M2[3, 2] + M1[1, 4] * M2[4, 2];
+     Result[1, 3] := M1[1, 1] * M2[1, 3] + M1[1, 2] * M2[2, 3] + M1[1, 3] * M2[3, 3] + M1[1, 4] * M2[4, 3];
+     Result[1, 4] := M1[1, 4];
+
+     Result[2, 1] := M1[2, 1] * M2[1, 1] + M1[2, 2] * M2[2, 1] + M1[2, 3] * M2[3, 1] + M1[2, 4] * M2[4, 1];
+     Result[2, 2] := M1[2, 1] * M2[1, 2] + M1[2, 2] * M2[2, 2] + M1[2, 3] * M2[3, 2] + M1[2, 4] * M2[4, 2];
+     Result[2, 3] := M1[2, 1] * M2[1, 3] + M1[2, 2] * M2[2, 3] + M1[2, 3] * M2[3, 3] + M1[2, 4] * M2[4, 3];
+     Result[2, 4] := M1[2, 4];
+
+     Result[3, 1] := M1[3, 1] * M2[1, 1] + M1[3, 2] * M2[2, 1] + M1[3, 3] * M2[3, 1] + M1[3, 4] * M2[4, 1];
+     Result[3, 2] := M1[3, 1] * M2[1, 2] + M1[3, 2] * M2[2, 2] + M1[3, 3] * M2[3, 2] + M1[3, 4] * M2[4, 2];
+     Result[3, 3] := M1[3, 1] * M2[1, 3] + M1[3, 2] * M2[2, 3] + M1[3, 3] * M2[3, 3] + M1[3, 4] * M2[4, 3];
+     Result[3, 4] := M1[3, 4];
+
+     Result[4, 1] := M1[4, 1] * M2[1, 1] + M1[4, 2] * M2[2, 1] + M1[4, 3] * M2[3, 1] + M1[4, 4] * M2[4, 1];
+     Result[4, 2] := M1[4, 1] * M2[1, 2] + M1[4, 2] * M2[2, 2] + M1[4, 3] * M2[3, 2] + M1[4, 4] * M2[4, 2];
+     Result[4, 3] := M1[4, 1] * M2[1, 3] + M1[4, 2] * M2[2, 3] + M1[4, 3] * M2[3, 3] + M1[4, 4] * M2[4, 3];
+     Result[4, 4] := M1[4, 4];
+   end
+  else
+   begin
+     Result[1, 1] := M1[1, 1] * M2[1, 1] + M1[1, 2] * M2[2, 1] + M1[1, 3] * M2[3, 1] + M1[1, 4] * M2[4, 1];
+     Result[1, 2] := M1[1, 1] * M2[1, 2] + M1[1, 2] * M2[2, 2] + M1[1, 3] * M2[3, 2] + M1[1, 4] * M2[4, 2];
+     Result[1, 3] := M1[1, 1] * M2[1, 3] + M1[1, 2] * M2[2, 3] + M1[1, 3] * M2[3, 3] + M1[1, 4] * M2[4, 3];
+     Result[1, 4] := M1[1, 1] * M2[1, 4] + M1[1, 2] * M2[2, 4] + M1[1, 3] * M2[3, 4] + M1[1, 4] * M2[4, 4];
+
+     Result[2, 1] := M1[2, 1] * M2[1, 1] + M1[2, 2] * M2[2, 1] + M1[2, 3] * M2[3, 1] + M1[2, 4] * M2[4, 1];
+     Result[2, 2] := M1[2, 1] * M2[1, 2] + M1[2, 2] * M2[2, 2] + M1[2, 3] * M2[3, 2] + M1[2, 4] * M2[4, 2];
+     Result[2, 3] := M1[2, 1] * M2[1, 3] + M1[2, 2] * M2[2, 3] + M1[2, 3] * M2[3, 3] + M1[2, 4] * M2[4, 3];
+     Result[2, 4] := M1[2, 1] * M2[1, 4] + M1[2, 2] * M2[2, 4] + M1[2, 3] * M2[3, 4] + M1[2, 4] * M2[4, 4];
+
+     Result[3, 1] := M1[3, 1] * M2[1, 1] + M1[3, 2] * M2[2, 1] + M1[3, 3] * M2[3, 1] + M1[3, 4] * M2[4, 1];
+     Result[3, 2] := M1[3, 1] * M2[1, 2] + M1[3, 2] * M2[2, 2] + M1[3, 3] * M2[3, 2] + M1[3, 4] * M2[4, 2];
+     Result[3, 3] := M1[3, 1] * M2[1, 3] + M1[3, 2] * M2[2, 3] + M1[3, 3] * M2[3, 3] + M1[3, 4] * M2[4, 3];
+     Result[3, 4] := M1[3, 1] * M2[1, 4] + M1[3, 2] * M2[2, 4] + M1[3, 3] * M2[3, 4] + M1[3, 4] * M2[4, 4];
+
+     Result[4, 1] := M1[4, 1] * M2[1, 1] + M1[4, 2] * M2[2, 1] + M1[4, 3] * M2[3, 1] + M1[4, 4] * M2[4, 1];
+     Result[4, 2] := M1[4, 1] * M2[1, 2] + M1[4, 2] * M2[2, 2] + M1[4, 3] * M2[3, 2] + M1[4, 4] * M2[4, 2];
+     Result[4, 3] := M1[4, 1] * M2[1, 3] + M1[4, 2] * M2[2, 3] + M1[4, 3] * M2[3, 3] + M1[4, 4] * M2[4, 3];
+     Result[4, 4] := M1[4, 1] * M2[1, 4] + M1[4, 2] * M2[2, 4] + M1[4, 3] * M2[3, 4] + M1[4, 4] * M2[4, 4];
+   end
+end;
+
+function _Det3_3D(a11, a21, a31, a12, a22, a32, a13, a23, a33: TRealType): TRealType;
+begin
+  Result := a11*a22*a33+a13*a21*a32+a12*a23*a31-
+            a13*a22*a31-a11*a32*a23-a12*a21*a33;
+end;
+
+function _Det4(const M: TTransf3D): TRealType;
+var
+  a1,a2,a3,b1,b2,b3,c1,c2,c3,d1,d2,d3: TRealType;
+begin
+  a1 := M[1,1];
+  a2 := M[2,1];
+  a3 := M[3,1];
+  b1 := M[1,2];
+  b2 := M[2,2];
+  b3 := M[3,2];
+  c1 := M[1,3];
+  c2 := M[2,3];
+  c3 := M[3,3];
+  d1 := M[1,4];
+  d2 := M[2,4];
+  d3 := M[3,4];
+  Result := -M[4, 1] * _Det3_3D(b1,b2,b3,c1,c2,c3,d1,d2,d3);
+  Result := Result+M[4, 2] * _Det3_3D(a1,a2,a3,c1,c2,c3,d1,d2,d3);
+  Result := Result-M[4, 3] * _Det3_3D(a1,a2,a3,b1,b2,b3,d1,d2,d3);
+  Result := Result+M[4, 4] * _Det3_3D(a1,a2,a3,b1,b2,b3,c1,c2,c3);
+end;
+
+function _Adjoint4(const M: TTransf3D): TTransf3D;
+var
+  a1,a2,a3,a4,b1,b2,b3,b4,c1,c2,c3,c4,d1,d2,d3,d4: TRealType;
+begin
+  a1 := M[1,1];
+  a2 := M[2,1];
+  a3 := M[3,1];
+  a4 := M[4,1];
+  b1 := M[1,2];
+  b2 := M[2,2];
+  b3 := M[3,2];
+  b4 := M[4,2];
+  c1 := M[1,3];
+  c2 := M[2,3];
+  c3 := M[3,3];
+  c4 := M[4,3];
+  d1 := M[1,4];
+  d2 := M[2,4];
+  d3 := M[3,4];
+  d4 := M[4,4];
+
+  Result[1, 1] := _Det3_3D(b2,b3,b4,c2,c3,c4,d2,d3,d4);
+  Result[2, 1] := -_Det3_3D(a2,a3,a4,c2,c3,c4,d2,d3,d4);
+  Result[3, 1] := _Det3_3D(a2,a3,a4,b2,b3,b4,d2,d3,d4);
+  Result[4, 1] := -_Det3_3D(a2,a3,a4,b2,b3,b4,c2,c3,c4);
+
+  Result[1, 2] := -_Det3_3D(b1,b3,b4,c1,c3,c4,d1,d3,d4);
+  Result[2, 2] := _Det3_3D(a1,a3,a4,c1,c3,c4,d1,d3,d4);
+  Result[3, 2] := -_Det3_3D(a1,a3,a4,b1,b3,b4,d1,d3,d4);
+  Result[4, 2] := _Det3_3D(a1,a3,a4,b1,b3,b4,c1,c3,c4);
+
+  Result[1, 3] := _Det3_3D(b1,b2,b4,c1,c2,c4,d1,d2,d4);
+  Result[2, 3] := -_Det3_3D(a1,a2,a4,c1,c2,c4,d1,d2,d4);
+  Result[3, 3] := _Det3_3D(a1,a2,a4,b1,b2,b4,d1,d2,d4);
+  Result[4, 3] := -_Det3_3D(a1,a2,a4,b1,b2,b4,c1,c2,c4);
+
+  Result[1, 4] := -_Det3_3D(b1,b2,b3,c1,c2,c3,d1,d2,d3);
+  Result[2, 4] := _Det3_3D(a1,a2,a3,c1,c2,c3,d1,d2,d3);
+  Result[3, 4] := -_Det3_3D(a1,a2,a3,b1,b2,b3,d1,d2,d3);
+  Result[4, 4] := _Det3_3D(a1,a2,a3,b1,b2,b3,c1,c2,c3);
+end;
+
+function InvertTransform3D(const M1: TTransf3D): TTransf3D;
+var
+  Divisor: TRealType;
+begin
+  Divisor := _Det4(M1);
+  if Divisor = 0.0 then
+   begin
+     Result := NullTransf3D;
+     Exit;
+   end;
+  Result := _Adjoint4(M1);
+  if Divisor = 1.0 then
+   begin
+     Result := NullTransf3D;
+     Exit;
+   end;
+  Result[1, 1] := Result[1, 1] / Divisor;
+  Result[1, 2] := Result[1, 2] / Divisor;
+  Result[1, 3] := Result[1, 3] / Divisor;
+  Result[1, 4] := Result[1, 4] / Divisor;
+  Result[2, 1] := Result[2, 1] / Divisor;
+  Result[2, 2] := Result[2, 2] / Divisor;
+  Result[2, 3] := Result[2, 3] / Divisor;
+  Result[2, 4] := Result[2, 4] / Divisor;
+  Result[3, 1] := Result[3, 1] / Divisor;
+  Result[3, 2] := Result[3, 2] / Divisor;
+  Result[3, 3] := Result[3, 3] / Divisor;
+  Result[3, 4] := Result[3, 4] / Divisor;
+  Result[4, 1] := Result[4, 1] / Divisor;
+  Result[4, 2] := Result[4, 2] / Divisor;
+  Result[4, 3] := Result[4, 3] / Divisor;
+  Result[4, 4] := Result[4, 4] / Divisor;
+end;
+
+function TransformPoint3D(const P: TPoint3D; const T: TTransf3D): TPoint3D;
+begin
+  if (T[1, 4] = 0.0) and (T[2, 4] = 0.0) and (T[3, 4] = 0.0) and (T[4, 4] = 1.0) then
+   begin
+     Result.X := P.X * T[1, 1] + P.Y * T[2, 1] + P.Z * T[3, 1] + P.W * T[4, 1];
+     Result.Y := P.X * T[1, 2] + P.Y * T[2, 2] + P.Z * T[3, 2] + P.W * T[4, 2];
+     Result.Z := P.X * T[1, 3] + P.Y * T[2, 3] + P.Z * T[3, 3] + P.W * T[4, 3];
+     Result.W := P.W;
+   end
+  else
+   begin
+     Result.X := P.X * T[1, 1] + P.Y * T[2, 1] + P.Z * T[3, 1] + P.W * T[4, 1];
+     Result.Y := P.X * T[1, 2] + P.Y * T[2, 2] + P.Z * T[3, 2] + P.W * T[4, 2];
+     Result.Z := P.X * T[1, 3] + P.Y * T[2, 3] + P.Z * T[3, 3] + P.W * T[4, 3];
+     Result.W := P.X * T[1, 4] + P.Y * T[2, 4] + P.Z * T[3, 4] + P.W * T[4, 4];
+   end;
+end;
+
+function TransformVector3D(const V: TVector3D; const T: TTransf3D): TVector3D;
+begin
+  Result.X := V.X * T[1, 1] + V.Y * T[2, 1] + V.Z * T[3, 1];
+  Result.Y := V.X * T[1, 2] + V.Y * T[2, 2] + V.Z * T[3, 2];
+  Result.Z := V.X * T[1, 3] + V.Y * T[2, 3] + V.Z * T[3, 3];
+end;
+
+function TransposeMatrix3D(const M: TTransf3D): TTransf3D;
+begin
+  Result := M;
+  Result[2, 1] := M[1, 2];
+  Result[3, 1] := M[1, 3];
+  Result[4, 1] := M[1, 4];
+
+  Result[1, 2] := M[2, 1];
+  Result[3, 2] := M[2, 3];
+  Result[4, 2] := M[2, 4];
+
+  Result[1, 3] := M[3, 1];
+  Result[2, 3] := M[3, 2];
+  Result[4, 3] := M[3, 4];
+
+  Result[1, 4] := M[4, 1];
+  Result[2, 4] := M[4, 2];
+  Result[3, 4] := M[4, 3];
+end;
+
+function TransformNormalVector3D(const N: TVector3D; const T: TTransf3D): TVector3D;
+var
+  TmpMat: TTransf3D;
+begin
+  TmpMat := InvertTransform3D(T);
+  TmpMat := TransposeMatrix3D(TmpMat);
+  Result := TransformVector3D(N, TmpMat);
+end;
+
+function TransformRect3D(const R: TRect3D; const T: TTransf3D): TRect3D;
+begin
+  Result.FirstEdge := TransformPoint3D(R.FirstEdge, T);
+  Result.SecondEdge := TransformPoint3D(R.SecondEdge, T);
+end;
+
+function Translate3D(const Tx, Ty, Tz: TRealType): TTransf3D;
+begin
+  Result := IdentityTransf3D;
+  Result[4, 1] := Tx;
+  Result[4, 2] := Ty;
+  Result[4, 3] := Tz;
+end;
+
+function Rotate3DX(const R: TRealType): TTransf3D;
+begin
+  Result := IdentityTransf3D;
+  Result[2, 2] := cos(R);
+  Result[2, 3] := sin(R);
+  Result[3, 2] := -sin(R);
+  Result[3, 3] := cos(R);
+end;
+
+function Rotate3DY(const R: TRealType): TTransf3D;
+begin
+  Result := IdentityTransf3D;
+  Result[1, 1] := cos(R);
+  Result[1, 3] := -sin(R);
+  Result[3, 1] := sin(R);
+  Result[3, 3] := cos(R);
+end;
+
+function Rotate3DZ(const R: TRealType): TTransf3D;
+begin
+  Result := IdentityTransf3D;
+  Result[1, 1] := cos(R);
+  Result[1, 2] := sin(R);
+  Result[2, 1] := -sin(R);
+  Result[2, 2] := cos(R);
+end;
+
+// From Graphics FAQ :)
+function RotateOnAxis3D(const Center: TPoint3D; const Axis: TVector3D; const Angle: TRealType): TTransf3D;
+var
+  Quaternion: TPoint3D;
+  XX, ZZ, XY, WZ, XZ, WY, YZ, WX, YY: TRealType;
+  CosHalfAngle, SinHalfAngle: TRealType;
+begin
+  CosHalfAngle := Cos(Angle / 2.0);
+  SinHalfAngle := Sin(Angle / 2.0);
+
+  Quaternion.X := Axis.X * SinHalfAngle;
+  Quaternion.Y := Axis.Y * SinHalfAngle;
+  Quaternion.Z := Axis.Z * SinHalfAngle;
+  Quaternion.W := CosHalfAngle;
+
+  // Uso un punto 2D per risparmiare tre variabili.
+  XX := Quaternion.X * Quaternion.X;
+  YY := Quaternion.Y * Quaternion.Y;
+  ZZ := Quaternion.Z * Quaternion.Z;
+
+  WX := Quaternion.W * Quaternion.X;
+  WZ := Quaternion.W * Quaternion.Z;
+  WY := Quaternion.W * Quaternion.Y;
+
+  XY := Quaternion.X * Quaternion.Y;
+  XZ := Quaternion.X * Quaternion.Z;
+  YZ := Quaternion.Y * Quaternion.Z;
+
+  Result := IdentityTransf3D;
+
+  Result[1, 1] := 1.0 - 2.0 * YY - 2.0 * ZZ;
+  Result[2, 1] := 2.0 * XY - 2.0 * WZ;
+  Result[3, 1] := 2.0 * XZ + 2.0 * WY;
+
+  Result[1, 2] := 2.0 * XY + 2.0 * WZ;
+  Result[2, 2] := 1.0 - 2.0 * XX - 2.0 * ZZ;
+  Result[3, 2] := 2.0 * YZ - 2.0 * WX;
+
+  Result[1, 3] := 2.0 * XZ - 2.0 * WY;
+  Result[2, 3] := 2.0 * YZ + 2.0 * WX;
+  Result[3, 3] := 1.0 - 2.0 * XX - 2.0 * YY;
+
+  Result[4, 1] := Center.X - Result[1, 1] * Center.X - Result[2, 1] * Center.Y - Result[3, 1] * Center.Z;
+  Result[4, 2] := Center.Y - Result[1, 2] * Center.X - Result[2, 2] * Center.Y - Result[3, 2] * Center.Z;
+  Result[4, 3] := Center.Z - Result[1, 3] * Center.X - Result[2, 3] * Center.Y - Result[3, 3] * Center.Z;
+end;
+
+function Scale3D(const Sx, Sy, Sz: TRealType): TTransf3D;
+begin
+  Result := IdentityTransf3D;
+  Result[1, 1] := Sx;
+  Result[2, 2] := Sy;
+  Result[3, 3] := Sz;
+end;
+
+{
+  The 3D world is projected on a plane called the view-plane. Is
+  also defined a view-volume, that is a volume that bound the object
+  projected on the view-plane.
+
+  VRP is the view-reference-point, that is a point on the view plane.
+      It can be any point in the 3D space.
+  VPN is the view-plane-normal, that is a versor (direction) that
+      orients the view-plane.
+  VUP is the up vector (see Window).
+  Window is a viewport on the view-plane. It's also define the view-volume.
+         The window is defined on the view-plane coordinates. The origin
+         of this coordinates is VRP.
+         VPN is the z axis of the view-plane coords. VUP is the y axis.
+         The x axis is found considering a right-handed system.
+  PRP is the center of projection in the case of perspective projection.
+  F is the front clipping plane that is the first plane encoutered along
+    VPN. If it is referred to VRP. If it is positive the the objects
+    behind the observer are projected.
+  B is the back clipping plane. A large value ensure that all the object
+    in front of the observer are displaied.
+
+  At the moment only non-oblique projection are considered.
+  Guardo nel verso negativo dell'asse z.
+}
+
+function ViewOrientationTransform3D(const VRP: TPoint3D; const VPN, VUP: TVector3D): TTransf3D;
+var
+  RX, RY, RZ: TVector3D;
+  TmpUP: TVector3D;
+  TmpReal: TRealType;
+  R: TTransf3D;
+begin
+  // Make UP normal to VPN.
+  TmpReal := DotProduct3D(VUP, VPN);
+  if Abs(TmpReal) = 1.0 then
+   Exit;
+  TmpUP.X := VUP.X - VPN.X * TmpReal;
+  TmpUP.Y := VUP.Y - VPN.Y * TmpReal;
+  TmpUP.Z := VUP.Z - VPN.Z * TmpReal;
+  TmpUP := NormalizeVector3D(TmpUP);
+  RZ := VPN;
+  RX := CrossProd3D(TmpUP,RZ);
+  RY := CrossProd3D(RZ, RX);
+  R := IdentityTransf3D;
+  R := ColumnVector3D(R, 1, RX);
+  R := ColumnVector3D(R, 2, RY);
+  R := ColumnVector3D(R, 3, RZ);
+
+  { translate in VRP and rotate (VPN == z). }
+  Result := MultiplyTransform3D(Translate3D(-VRP.X, -VRP.Y, -VRP.Z), R);
+end;
+
+{ F, B entrambi positivi se nella direzione di vista. }
+function ParallelViewNormalization3D(ViewWindow: TRect2D; const F, B: TRealType): TTransf3D;
+var
+  T, S: TTransf3D;
+begin
+  T := Translate3D(-(ViewWindow.Right + ViewWindow.Left) / 2.0, -(ViewWindow.Top + ViewWindow.Bottom) / 2.0, F);
+  S := Scale3D(2 / (ViewWindow.Right - ViewWindow.Left), 2 / (ViewWindow.Top - ViewWindow.Bottom), 1 / (B - F));
+  Result := MultiplyTransform3D(T, S);
+end;
+
+function PerspectiveViewNormalization3D(ViewWindow: TRect2D; const PlaneDistance, F, B: TRealType): TTransf3D;
+var
+  SH, S, M: TTransf3D;
+  TmpFactor, VRPZ: Extended;
+begin
+  if (PlaneDistance = 0) or (PlaneDistance = B) then
+   Exit;
+  { translate in PRP. }
+  VRPZ := -PlaneDistance;
+  Result := Translate3D(0, 0, VRPZ);
+
+  { Appy the shear. }
+  SH := IdentityTransf3D;
+  SH[3, 1] := -(ViewWindow.Right + ViewWindow.Left) / (2.0 * VRPZ);
+  SH[3, 2] := -(ViewWindow.Top + ViewWindow.Bottom) / (2.0 * VRPZ);
+  Result := MultiplyTransform3D(Result, SH);
+
+  TmpFactor := 2 * VRPZ / (VRPZ - B);
+  S := IdentityTransf3D;
+  S[1, 1] := TmpFactor / (ViewWindow.Right - ViewWindow.Left);
+  S[2, 2] := TmpFactor / (ViewWindow.Top - ViewWindow.Bottom);
+  S[3, 3] := -1 / (VRPZ - B);
+  Result := MultiplyTransform3D(Result, S);
+
+  M := IdentityTransf3D;
+  TmpFactor := -(VRPZ - F) / (VRPZ - B);
+  M[4, 4] := 0;
+  M[3, 4] := -1;
+  M[3, 3] := 1 / (1 + TmpFactor);
+  M[4, 3] := -TmpFactor / (1 + TmpFactor);
+  Result := MultiplyTransform3D(Result, M);
+end;
+
+function _PositionCodeCartesian3D(Clip: TRect3D; P: TPoint3D): TOutCode;
+begin
+  Result := [];
+  P := CartesianPoint3D(P);
+  if P.X < Clip.FirstEdge.X then
+   Result := [left]
+  else if P.X > Clip.SecondEdge.X then
+   Result := [right];
+  if P.Y < Clip.FirstEdge.Y then
+   Result := Result + [bottom]
+  else if P.Y > Clip.SecondEdge.Y then
+   Result := Result + [top];
+  if P.Z < Clip.FirstEdge.Z then
+   Result := Result + [fareye]
+  else if P.Z > Clip.SecondEdge.Z then
+   Result := Result + [neareye];
+end;
+
+function _PositionCode3D(Clip: TRect3D; P: TPoint3D): TOutCode;
+begin
+  Result := [];
+  P := CartesianPoint3D(P);
+  Clip := ReorderRect3D(Clip);
+  if P.X < Clip.FirstEdge.X then
+   Result := [left]
+  else if P.X > Clip.SecondEdge.X then
+   Result := [right];
+  if P.Y < Clip.FirstEdge.Y then
+   Result := Result + [bottom]
+  else if P.Y > Clip.SecondEdge.Y then
+   Result := Result + [top];
+  if P.Z < Clip.FirstEdge.Z then
+   Result := Result + [fareye]
+  else if P.Z > Clip.SecondEdge.Z then // To be tested !! Corretto il 8/10/99 togliendo l'=. 
+   Result := Result + [neareye];
+end;
+
+function _PositionCodeNRC3D(const P: TPoint3D): TOutCode;
+begin
+  Result := [];
+  if P.W < 0.0 then
+   begin
+     if P.X > -P.W then
+      Result := [left]
+     else if P.X < P.W then
+      Result := [right];
+     if P.Y > -P.W then
+      Result := Result + [bottom]
+     else if P.Y < P.W then
+      Result := Result + [top];
+     if P.Z > -P.W then
+      Result := Result + [fareye]
+     else if P.Z <= 0.0 then
+      Result := Result + [neareye]
+   end
+  else
+   begin
+     if P.X < -P.W then
+      Result := [left]
+     else if P.X > P.W then
+      Result := [right];
+     if P.Y < -P.W then
+      Result := Result + [bottom]
+     else if P.Y > P.W then
+      Result := Result + [top];
+     if P.Z < -P.W then
+      Result := Result + [fareye]
+     else if P.Z >= 0.0 then
+      Result := Result + [neareye]
+   end;
+end;
+
+function IsBoxInBox3D(Box1, Box2: TRect3D): Boolean;
+var
+  FCode, SCode: TOutCode;
+begin
+  Box2 := ReOrderRect3D(Box2);
+  FCode := _PositionCodeCartesian3D(Box2, Box1.FirstEdge);
+  SCode := _PositionCodeCartesian3D(Box2, Box1.SecondEdge);
+  Result := (FCode * SCode) = [];
+end;
+
+function IsPointInBox3D(const Pt: TPoint3D; const Box: TRect3D): Boolean;
+begin
+  Result := _PositionCode3D(Box, Pt) = [];
+end;
+
+function IsPointInBoxNRC3D(const Pt: TPoint3D): Boolean;
+begin
+  Result := _PositionCodeNRC3D(Pt) = [];
+end;
+
+function IsVisibleBoxNRC3D(Box: TRect3D): Boolean;
+begin
+  Result := _PositionCodeNRC3D(Box.FirstEdge) * _PositionCodeNRC3D(Box.SecondEdge) = [];
+  Result := Result or
+    (_PositionCodeNRC3D(Point3D(Box.Left, Box.Top, Box.Front)) * _PositionCodeNRC3D(Point3D(Box.Right, Box.Bottom, Box.Back)) = []);
+end;
+
+function BoxFilling3D(Box1, Box2: TRect3D): Word;
+var
+  Tmp1, Tmp2, Tmp3: Byte;
+begin
+  try
+    Box1 := ReOrderRect3D(Box1);
+    Box2 := ReOrderRect3D(Box2);
+    Tmp1 := Round((Box1.SecondEdge.X - Box1.FirstEdge.X) / (Box2.SecondEdge.X - Box2.FirstEdge.X) * 1000);
+    Tmp2 := Round((Box1.SecondEdge.Y - Box1.FirstEdge.Y) / (Box2.SecondEdge.Y - Box2.FirstEdge.Y) * 1000);
+    Tmp3 := Round((Box1.SecondEdge.Z - Box1.FirstEdge.Z) / (Box2.SecondEdge.Z - Box2.FirstEdge.Z) * 1000);
+    if Tmp1 > Tmp2 then
+     Result := Tmp1
+    else if Tmp2 > Tmp3 then
+     Result := Tmp2
+    else
+     Result := Tmp3;
+  except
+    on Exception do Result := 1000;
+  end;
+end;
+
+function BoxFillingNRC3D(Box: TRect3D): Word;
+var
+  Tmp1, Tmp2, Tmp3: Byte;
+begin
+  try
+    Box := ReorderRect3D(Box);
+    Tmp1 := Round((Box.SecondEdge.X - Box.FirstEdge.X) * 500);
+    Tmp2 := Round((Box.SecondEdge.Y - Box.FirstEdge.Y) * 500);
+    Tmp3 := Round((Box.SecondEdge.Z - Box.FirstEdge.Z) * 1000);
+    if Tmp1 > Tmp2 then
+     Result := Tmp1
+    else if Tmp2 > Tmp3 then
+     Result := Tmp2
+    else
+     Result := Tmp3;
+  except
+    on Exception do Result := 1000;
+  end;
+end;
+
+function IsBoxAllInBox3D(Box1, Box2: TRect3D): Boolean;
+var
+  FCode, SCode: TOutCode;
+begin
+  Box2 := ReOrderRect3D(Box2);
+  FCode := _PositionCodeCartesian3D(Box2, Box1.FirstEdge);
+  SCode := _PositionCodeCartesian3D(Box2, Box1.SecondEdge);
+  Result := (FCode = []) and (SCode = []);
+end;
+
+function IsBoxAllInBoxNRC3D(Box: TRect3D): Boolean;
+var
+  FCode, SCode: TOutCode;
+begin
+  FCode := _PositionCodeNRC3D(Box.FirstEdge);
+  SCode := _PositionCodeNRC3D(Box.SecondEdge);
+  Result := (FCode = []) and (SCode = []);
+end;
+
+function IsBoxAllInFrontNRC3D(Box: TRect3D): Boolean;
+var
+  FCode, SCode: TOutCode;
+begin
+  FCode := _PositionCodeNRC3D(Box.FirstEdge);
+  SCode := _PositionCodeNRC3D(Box.SecondEdge);
+  Result := not (neareye in FCode) and not (neareye in SCode);
+end;
+
+function BoxOutBox3D(Box1, Box2: TRect3D): TRect3D;
+begin
+  Box1 := ReOrderRect3D(Box1);
+  Box2 := ReOrderRect3D(Box2);
+  Result := Box1;
+  if Box2.FirstEdge.X < Box1.FirstEdge.X then
+   Result.FirstEdge.X := Box2.FirstEdge.X;
+  if Box2.SecondEdge.X > Box1.SecondEdge.X then
+   Result.SecondEdge.X := Box2.SecondEdge.X;
+  if Box2.FirstEdge.Y < Box1.FirstEdge.Y then
+   Result.FirstEdge.Y := Box2.FirstEdge.Y;
+  if Box2.SecondEdge.Y > Box1.SecondEdge.Y then
+   Result.SecondEdge.Y := Box2.SecondEdge.Y;
+  if Box2.FirstEdge.Z < Box1.FirstEdge.Z then
+   Result.FirstEdge.Z := Box2.FirstEdge.Z;
+  if Box2.SecondEdge.Z > Box1.SecondEdge.Z then
+   Result.SecondEdge.Z := Box2.SecondEdge.Z;
+end;
+
+function NearPoint3D(RP, P: TPoint3D; const Aperture: TRealType;
+                     var Dist: TRealType; const NT: TTransf3D): Boolean;
+var
+  P2D, RP2D: TPoint2D;
+begin
+  RP2D := Point3DToPoint2D(TransformPoint3D(RP, NT));
+  P2D := Point3DToPoint2D(P);
+  Result := NearPoint2D(RP2D, P2D, Aperture, Dist);
+end;
+
+function IsPointOnPolyLine3D(const Vect: Pointer; Count: Integer;
+                             const P: TPoint3D; var Dist: TRealType;
+                             const Aperture: TRealType; const NT: TTransf3D; const MustClose: Boolean): Integer;
+var
+  MinDist, TmpDist: TRealType;
+  TmpPt12D, TmpPt22D, TmpPt2D: TPoint2D;
+  Cont, Max: Integer;
+begin
+  Result := PICK_NOOBJECT;
+  Dist := MaxCoord;
+  if Count = 0 then
+   Exit;
+  MinDist := Aperture;
+  TmpPt12D := Point3DToPoint2D(TransformPoint3D(PVectPoints3D(Vect)^[0], NT));
+  TmpPt2D := Point3DToPoint2D(P);
+  if MustClose then
+   Max := Count
+  else
+   Max := Count - 1;
+  for Cont := 1 to Max do
+   begin
+     if Cont = Count then
+      TmpPt22D := Point3DToPoint2D(TransformPoint3D(PVectPoints3D(Vect)^[0], NT))
+     else
+      TmpPt22D := Point3DToPoint2D(TransformPoint3D(PVectPoints3D(Vect)^[Cont], NT));
+     TmpDist := 0;
+     if _PointSegmentDistance2D(TmpPt2D, TmpPt12D, TmpPt22D, TmpDist) and (TmpDist <= MinDist) then
+      begin
+        Result := PICK_ONOBJECT;
+        Dist := TmpDist;
+        MinDist := Dist;
+      end;
+     TmpPt12D := TmpPt22D;
+   end;
+end;
+
+function IsPointOnLine3D(const A, B, P: TPoint3D; var Dist: TRealType;
+                       const Aperture: TRealType; const NT: TTransf3D): Integer;
+var
+  TmpDist: TRealType;
+  TmpPt12D, TmpPt22D, TmpPt2D: TPoint2D;
+begin
+  Result := PICK_NOOBJECT;
+  Dist := MaxCoord;
+  TmpPt12D := Point3DToPoint2D(TransformPoint3D(A, NT));
+  TmpPt22D := Point3DToPoint2D(TransformPoint3D(B, NT));
+  TmpPt2D := Point3DToPoint2D(P);
+  TmpDist := 0;
+  if _PointSegmentDistance2D(TmpPt2D, TmpPt12D, TmpPt22D, TmpDist) and (TmpDist <= Aperture) then
+   begin
+     Result := PICK_ONOBJECT;
+     Dist := TmpDist;
+   end;
+end;
+
+function GetBox2DExtension3D(Box: TRect3D; const WorldToPlane: TTransf3D): TRect2D;
+var
+  TmpPt: TPoint3D;
+  TmpBox: TRect2D;
+begin
+  Result.FirstEdge := Point3DToPoint2D(TransformPoint3D(Box.FirstEdge, WorldToPlane));
+  Result.SecondEdge := Point3DToPoint2D(TransformPoint3D(Box.SecondEdge, WorldToPlane));
+
+  TmpPt := Point3D(Box.FirstEdge.X, Box.FirstEdge.Y, Box.SecondEdge.Z);
+  TmpBox.FirstEdge := Point3DToPoint2D(TransformPoint3D(TmpPt, WorldToPlane));
+  TmpPt := Point3D(Box.FirstEdge.X, Box.SecondEdge.Y, Box.FirstEdge.Z);
+  TmpBox.SecondEdge := Point3DToPoint2D(TransformPoint3D(TmpPt, WorldToPlane));
+  Result := BoxOutBox2D(Result, TmpBox);
+
+  TmpPt := Point3D(Box.SecondEdge.X, Box.SecondEdge.Y, Box.FirstEdge.Z);
+  TmpBox.FirstEdge := Point3DToPoint2D(TransformPoint3D(TmpPt, WorldToPlane));
+  TmpPt := Point3D(Box.SecondEdge.X, Box.FirstEdge.Y, Box.SecondEdge.Z);
+  TmpBox.SecondEdge := Point3DToPoint2D(TransformPoint3D(TmpPt, WorldToPlane));
+  Result := BoxOutBox2D(Result, TmpBox);
+
+  TmpPt := Point3D(Box.FirstEdge.X, Box.SecondEdge.Y, Box.SecondEdge.Z);
+  TmpBox.FirstEdge := Point3DToPoint2D(TransformPoint3D(TmpPt, WorldToPlane));
+  TmpPt := Point3D(Box.SecondEdge.X, Box.FirstEdge.Y, Box.FirstEdge.Z);
+  TmpBox.SecondEdge := Point3DToPoint2D(TransformPoint3D(TmpPt, WorldToPlane));
+  Result := BoxOutBox2D(Result, TmpBox);
+end;
+
+function _PointOutBox3D(const TmpPt: TPoint3D; const Box: TRect3D): TRect3D;
+begin
+  Result := Box;
+  if TmpPt.X > Result.SecondEdge.X then
+   Result.SecondEdge.X := TmpPt.X
+  else if TmpPt.X < Result.FirstEdge.X then
+   Result.FirstEdge.X := TmpPt.X;
+  if TmpPt.Y > Result.SecondEdge.Y then
+   Result.SecondEdge.Y := TmpPt.Y
+  else if TmpPt.Y < Result.FirstEdge.Y then
+   Result.FirstEdge.Y := TmpPt.Y;
+  if TmpPt.Z > Result.SecondEdge.Z then
+   Result.SecondEdge.Z := TmpPt.Z
+  else if TmpPt.Z < Result.FirstEdge.Z then
+   Result.FirstEdge.Z := TmpPt.Z;
+end;
+
+function TransformBoundingBox3D(Box: TRect3D; const Transf: TTransf3D): TRect3D;
+var
+  TmpPt: TPoint3D;
+begin
+  Box := CartesianRect3D(Box);
+  TmpPt := TransformPoint3D(Point3D(Box.FirstEdge.X, Box.FirstEdge.Y, Box.FirstEdge.Z), Transf);
+  Result.FirstEdge := TmpPt;
+  Result.SecondEdge := TmpPt;
+  TmpPt := TransformPoint3D(Point3D(Box.FirstEdge.X, Box.SecondEdge.Y, Box.FirstEdge.Z), Transf);
+  Result := _PointOutBox3D(CartesianPoint3D(TmpPt), Result);
+  TmpPt := TransformPoint3D(Point3D(Box.SecondEdge.X, Box.SecondEdge.Y, Box.FirstEdge.Z), Transf);
+  Result := _PointOutBox3D(CartesianPoint3D(TmpPt), Result);
+  TmpPt := TransformPoint3D(Point3D(Box.SecondEdge.X, Box.FirstEdge.Y, Box.FirstEdge.Z), Transf);
+  Result := _PointOutBox3D(CartesianPoint3D(TmpPt), Result);
+  TmpPt := TransformPoint3D(Point3D(Box.FirstEdge.X, Box.FirstEdge.Y, Box.SecondEdge.Z), Transf);
+  Result := _PointOutBox3D(CartesianPoint3D(TmpPt), Result);
+  TmpPt := TransformPoint3D(Point3D(Box.FirstEdge.X, Box.SecondEdge.Y, Box.SecondEdge.Z), Transf);
+  Result := _PointOutBox3D(CartesianPoint3D(TmpPt), Result);
+  TmpPt := TransformPoint3D(Point3D(Box.SecondEdge.X, Box.SecondEdge.Y, Box.SecondEdge.Z), Transf);
+  Result := _PointOutBox3D(CartesianPoint3D(TmpPt), Result);
+  TmpPt := TransformPoint3D(Point3D(Box.SecondEdge.X, Box.FirstEdge.Y, Box.SecondEdge.Z), Transf);
+  Result := _PointOutBox3D(CartesianPoint3D(TmpPt), Result);
+end;
+
+function ExtrudePoint3D(Pt: TPoint3D; const Dir: TVector3D; Size: TRealType): TPoint3D;
+begin
+  Pt := CartesianPoint3D(Pt);
+  Result.X := Pt.X + Dir.X * Size;
+  Result.Y := Pt.Y + Dir.Y * Size;
+  Result.Z := Pt.Z + Dir.Z * Size;
+  Result.W := Pt.W;
+end;
+
+function WorldPointToPlane3D(const WPt: TPoint3D; const CastDir, PlaneNorm, PlaneUP: TVector3D; const PlaneOrg: TPoint3D): TPoint2D;
+var
+  RefX, NewPt, ResPt: TVector3D;
+  TmpPt: TPoint3D;
+begin
+  RefX := CrossProd3D(PlaneUp, PlaneNorm);
+  TmpPt := CastPointOnPlane3D(WPt, CastDir, PlaneNorm, PlaneOrg);
+  NewPt := Vector3D(CartesianPoint3D(PlaneOrg), CartesianPoint3D(TmpPt));
+  ResPt.X := DotProduct3D(NewPt, RefX);
+  ResPt.Y := DotProduct3D(NewPt, PlaneUP);
+  Result.X := ResPt.X;
+  Result.Y := ResPt.Y;
+  Result.W := 1.0;
+end;
+
+function PlanePointToWorld3D(const PPt: TPoint2D; const PlaneNorm, PlaneUP: TVector3D; const PlaneOrg: TPoint3D): TPoint3D;
+var
+  RefX, RefY: TVector3D;
+begin
+  RefX := CrossProd3D(PlaneUp, PlaneNorm);
+  RefY := CrossProd3D(PlaneNorm, RefX);
+  Result.X := PlaneOrg.X + RefX.X * PPt.X + RefY.X * PPt.Y;
+  Result.Y := PlaneOrg.Y + RefX.Y * PPt.X + RefY.Y * PPt.Y;
+  Result.Z := PlaneOrg.Z + RefX.Z * PPt.X + RefY.Z * PPt.Y;
+  Result.W := PlaneOrg.W;
+end;
+
+procedure ViewPlane(const CameraPos, CameraView: TPoint3D; CameraUp: TVector3D; var PlaneNorm, PlaneUp: TVector3D; var PlaneOrg: TPoint3D);
+begin
+  PlaneNorm := Direction3D(CameraPos, CameraView);
+  PlaneUp := CameraUp;
+  PlaneOrg := CameraView;
+end;
+
+function CastVectorOnPlane3D(const V: TVector3D; const PlaneNorm: TVector3D): TVector3D;
+var
+  t: TRealType;
+  TmpPt: TPoint3D;
+begin
+  t := DotProduct3D(V, PlaneNorm);
+  TmpPt := ExtrudePoint3D(Point3D(V.X, V.Y, V.Z), PlaneNorm, t);
+  Result := Versor3D(TmpPt.X, TmpPt.Y, TmpPt.Z);
+end;
+
+function CastPointOnPlane3D(const WPt: TPoint3D; const CastDir, PlaneNorm: TVector3D; const PlaneOrg: TPoint3D): TPoint3D;
+var
+  t: TRealType;
+begin
+  if DotProduct3D(CastDir, PlaneNorm) = 0 then
+   begin // Perpendicular, use the plane normal to cast.
+     t := DotProduct3D(Vector3D(WPt, PlaneOrg), PlaneNorm);
+     Result := ExtrudePoint3D(WPt, PlaneNorm, t);
+   end
+  else
+   begin
+     t := DotProduct3D(Vector3D(WPt, PlaneOrg), PlaneNorm) / DotProduct3D(CastDir, PlaneNorm);
+     Result := ExtrudePoint3D(WPt, CastDir, t);
+   end;
+end;
+
+procedure NormalPtPlaneToEq3D(const Normal: TVector3D; const Pt: TPoint3D; var A, B, C, D: TRealType);
+begin
+  A := Normal.X;
+  B := Normal.Y;
+  C := Normal.Z;
+  with CartesianPoint3D(Pt) do
+   D := -(A * X + B * Y + C * Z);
+end;
+
+procedure PlaneEqToNormalPt3D(A, B, C, D: TRealType; var Normal: TVector3D; var Org: TPoint3D);
+begin
+  Normal.X := A;
+  Normal.Y := B;
+  Normal.Z := C;
+  Org := ExtrudePoint3D(Point3D(0, 0, 0), Normal, D);
+end;
+
+function Reflect3D(const V: TVector3D): TVector3D;
+begin
+  Result.X := -V.X;
+  Result.Y := -V.Y;
+  Result.Z := -V.Z;
+end;
+
+procedure MakeOrto3D(LastPt: TPoint3D; var CurrPt: TPoint3D; PlaneOrigin: TPoint3D; PlaneNormal, PlaneUP: TVector3D);
+var
+  DeltaPt: TVector2D;
+  CurrPt2D, LastPt2D: TPoint2D;
+begin
+  CurrPt2D := WorldPointToPlane3D(CurrPt, PlaneNormal, PlaneNormal, PlaneUP, PlaneOrigin);
+  LastPt2D := WorldPointToPlane3D(LastPt, PlaneNormal, PlaneNormal, PlaneUP, PlaneOrigin);
+  LastPt2D := CartesianPoint2D(LastPt2D);
+  CurrPt2D := CartesianPoint2D(CurrPt2D);
+  DeltaPt := Vector2D(LastPt2D, CurrPt2D);
+  if Abs(DeltaPt.X) > Abs(DeltaPt.Y) then
+   CurrPt2D.Y := LastPt2D.Y
+  else
+   CurrPt2D.X := LastPt2D.X;
+  CurrPt := PlanePointToWorld3D(CurrPt2D, PlaneNormal, PlaneUP, PlaneOrigin);
+end;
+
+function GetHandleRuleForNormals: THandleRule;
+begin
+  Result := _HandleRuleForNormal;
+end;
+
+procedure SetHandleRuleForNormals(const HRule: THandleRule);
+begin
+  _HandleRuleForNormal := HRule;
+end;
+
+function GetVectNormal(const Vect: Pointer; Count: Integer): TVector3D;
+var
+  Max, Cont: Integer;
+  X, Y, Z: Extended;
+begin
+  Result.X := 0.0;
+  Result.Y := 0.0;
+  Result.Z := 0.0;
+  Max := Count;
+  if Max < 3 then
+   Exit;
+  X := 0.0;
+  Y := 0.0;
+  Z := 0.0;
+  for Cont := 0 to Max - 2 do
+   begin
+     X := X + (PVectPoints3D(Vect)^[Cont].Z + PVectPoints3D(Vect)^[Cont + 1].Z) * (PVectPoints3D(Vect)^[Cont + 1].Y - PVectPoints3D(Vect)^[Cont].Y);
+     Y := Y + (PVectPoints3D(Vect)^[Cont].X + PVectPoints3D(Vect)^[Cont + 1].X) * (PVectPoints3D(Vect)^[Cont + 1].Z - PVectPoints3D(Vect)^[Cont].Z);
+     Z := Z + (PVectPoints3D(Vect)^[Cont].Y + PVectPoints3D(Vect)^[Cont + 1].Y) * (PVectPoints3D(Vect)^[Cont + 1].X - PVectPoints3D(Vect)^[Cont].X);
+   end;
+  X := X + (PVectPoints3D(Vect)^[Max - 1].Z + PVectPoints3D(Vect)^[0].Z) * (PVectPoints3D(Vect)^[0].Y - PVectPoints3D(Vect)^[Max - 1].Y);
+  Y := Y + (PVectPoints3D(Vect)^[Max - 1].X + PVectPoints3D(Vect)^[0].X) * (PVectPoints3D(Vect)^[0].Z - PVectPoints3D(Vect)^[Max - 1].Z);
+  Z := Z + (PVectPoints3D(Vect)^[Max - 1].Y + PVectPoints3D(Vect)^[0].Y) * (PVectPoints3D(Vect)^[0].X - PVectPoints3D(Vect)^[Max - 1].X);
+  Result := Versor3D(X, Y, Z);
+  if _HandleRuleForNormal = hrRightHand then
+   Result := Reflect3D(Result);
+end;
+
+function PointDistance3D(const P1, P2: TPoint3D): TRealType;
+begin
+  Result := VectorLength3D(Vector3D(P1, P2));
+end;
+
+{$R+}
+function DotProduct3D(const V1, V2: TVector3D): TRealType;
+var
+  Res: Extended;
+begin
+  Res := V1.X * V2.X + V1.Y * V2.Y + V1.Z * V2.Z;
+  Result := Res;
+end;
+
+function CrossProd3D(const V1, V2: TVector3D): TVector3D;
+var
+  ResX, ResY, ResZ: Extended;
+begin
+  ResX := V1.Y * V2.Z - V1.Z * V2.Y;
+  ResY := V1.Z * V2.X - V1.X * V2.Z;
+  ResZ := V1.X * V2.Y - V1.Y * V2.X;
+  Result.X := ResX;
+  Result.Y := ResY;
+  Result.Z := ResZ;
+end;
+{$R-}
+
+function PointOutBox3D(Pt: TPoint3D; Box: TRect3D): TRect3D;
+begin
+  Pt := CartesianPoint3D(Pt);
+  Result := Box;
+  if Pt.X > Result.SecondEdge.X then
+   Result.SecondEdge.X := Pt.X
+  else if Pt.X < Result.FirstEdge.X then
+   Result.FirstEdge.X := Pt.X;
+  if Pt.Y > Result.SecondEdge.Y then
+   Result.SecondEdge.Y := Pt.Y
+  else if Pt.Y < Result.FirstEdge.Y then
+   Result.FirstEdge.Y := Pt.Y;
+  if Pt.Z > Result.SecondEdge.Z then
+   Result.SecondEdge.Z := Pt.Z
+  else if Pt.Z < Result.FirstEdge.Z then
+   Result.FirstEdge.Z := Pt.Z;
+end;
+
+{ 3D clipping functions }
+
+function _DotW(const P1, P2: TPoint3D): TRealType;
+begin
+  Result := P1.X * P2.X + P1.Y * P2.Y + P1.Z * P2.Z + P1.W * P2.W;
+end;
+
+// P1 - P2
+function _PointDifference3D(const P1, P2: TPoint3D): TPoint3D;
+begin
+  Result.X := P1.X - P2.X;
+  Result.Y := P1.Y - P2.Y;
+  Result.Z := P1.Z - P2.Z;
+  Result.W := P1.W - P2.W;
+end;
+
+{
+  S è il punto iniziale del segmento
+  E è il punto finale del segmento
+  Normal è la normale del piano di clipping
+  PE è un punto sul piano di clipping
+  R è la differenza E - S
+  tE è il parametro di intersezione iniziale
+  tL è il parametro di intersezione finale
+}
+function _Intersect(const S, {%H-}E, Normal, PE, R: TPoint3D; var tE, tL: Extended): Boolean;
+var
+  t, d: Extended;
+begin
+  Result := False;
+  d := -_DotW(Normal, R);
+
+  if d > 0 then
+   begin
+     t := _DotW(Normal, _PointDifference3D(S, PE)) / d;
+     if T > tL then
+      Exit
+     else if T > tE then
+      tE := T;
+   end
+  else if d < 0 then
+   begin
+     t := _DotW(Normal, _PointDifference3D(S, PE)) / d;
+     if T < tE then
+      Exit
+     else if T < tL then
+      tL := T;
+   end
+  else if _DotW(Normal, _PointDifference3D(S, PE)) > 0 then
+   Exit;
+  Result := True;
+end;
+
+const
+  FAR_NORMAL: TPoint3D = (X: 0.0; Y: 0.0; Z: 1.0; W: 0.0);
+  FAR_CLIPPOINT: TPoint3D = (X: 0.0; Y: 0.0; Z:0.0; W: 1.0);
+
+  NEAR_NORMAL: TPoint3D = (X: 0.0; Y: 0.0; Z:-0.7071067811865; W:-0.7071067811865);
+  NEAR_CLIPPOINT: TPoint3D = (X: 0.0; Y: 0.0; Z:-1.0; W: 1.0);
+
+  LEFT_NORMAL: TPoint3D = (X:-0.7071067811865; Y: 0.0; Z: 0.0; W:-0.7071067811865);
+  LEFT_CLIPPOINT: TPoint3D = (X:-1.0; Y: 0.0; Z: 0.0; W: 1.0);
+
+  RIGHT_NORMAL: TPoint3D = (X:0.7071067811865; Y: 0.0; Z: 0.0; W:-0.7071067811865);
+  RIGHT_CLIPPOINT: TPoint3D = (X: 1.0; Y: 0.0; Z: 0.0; W: 1.0);
+
+  TOP_NORMAL: TPoint3D = (X: 0.0; Y:0.7071067811865; Z: 0.0; W:-0.7071067811865);
+  TOP_CLIPPOINT: TPoint3D = (X: 0.0; Y: 1.0; Z: 0.0; W: 1.0);
+
+  BOTTOM_NORMAL: TPoint3D = (X: 0.0; Y:-0.7071067811865; Z: 0.0; W:-0.7071067811865);
+  BOTTOM_CLIPPOINT: TPoint3D = (X: 0.0; Y:-1.0; Z: 0.0; W: 1.0);
+
+function ClipLine3D(var Pt1, Pt2: TPoint3D): TClipResult;
+var
+  tE, tL: Extended;
+  D: TPoint3D;
+begin
+  Result := [ccNotVisible];
+  D := _PointDifference3D(Pt2, Pt1);
+  if (D.X = 0.0) and (D.Y = 0.0) and (D.Z = 0.0) and IsPointInBoxNRC3D(Pt1) then
+   begin
+     Result := [ccVisible];
+     Exit;
+   end;
+  tE := 0.0;
+  tL := 1.0;
+  if _Intersect(Pt1, Pt2, FAR_NORMAL, FAR_CLIPPOINT, D, tE, tL) then // Front
+   if _Intersect(Pt1, Pt2, NEAR_NORMAL, NEAR_CLIPPOINT, D, tE, tL) then // Back
+    if _Intersect(Pt1, Pt2, LEFT_NORMAL, LEFT_CLIPPOINT, D, tE, tL) then // Left
+     if _Intersect(Pt1, Pt2, RIGHT_NORMAL, RIGHT_CLIPPOINT, D, tE, tL) then // Right
+      if _Intersect(Pt1, Pt2, TOP_NORMAL, TOP_CLIPPOINT, D, tE, tL) then // Top
+       if _Intersect(Pt1, Pt2, BOTTOM_NORMAL, BOTTOM_CLIPPOINT, D, tE, tL) then // Bottom
+        begin
+          Result := [];
+          if tL < 1 then
+           begin
+             Pt2.X := Pt1.X + tL * D.X;
+             Pt2.Y := Pt1.Y + tL * D.Y;
+             Pt2.Z := Pt1.Z + tL * D.Z;
+             Pt2.W := Pt1.W + tL * D.W;
+             Result := [ccSecond];
+           end;
+          if tE > 0 then
+           begin
+             Pt1.X := Pt1.X + tE * D.X;
+             Pt1.Y := Pt1.Y + tE * D.Y;
+             Pt1.Z := Pt1.Z + tE * D.Z;
+             Pt1.W := Pt1.W + tE * D.W;
+             Result := Result + [ccFirst];
+           end;
+          if Result = [] then
+           Result := [ccVisible];
+        end;
 end;
 
 procedure Draw2DSubSetAsPolyline(const Vect: Pointer; Count: Integer;
@@ -7978,6 +12340,261 @@ begin
   DrawRect2DAsPolyline(Cnv, Box, Clip, IdentityTransf2D, S)
 end;
 
+procedure Draw3DSubSetAsPolyline(const Vect: Pointer; Count: Integer;
+                                 const Cnv: TDecorativeCanvas;
+                                 const Extent: TRect3D;
+                                 const NT: TTransf3D;
+                                 const VT: TTransf2D;
+                                 const StartIdx, EndIdx: Integer;
+                                 const ToBeClosed: Boolean);
+type
+  TPoints = array[0..0] of TPoint;
+var
+  VisPoints, Cont, AllocatedMem: Integer;
+  TmpPt1, TmpPt2: TPoint3D;
+  TmpPt12D, TmpPt22D: TPoint2D;
+  TmpPts: ^TPoints;
+  ClipRes: TClipResult;
+begin
+  if (Count = 0) or (EndIdx >= Count) or (StartIdx >= EndIdx) then
+   Exit;
+  if ToBeClosed then
+   AllocatedMem := (Count + 1) * SizeOf(TPoint)
+  else
+   AllocatedMem := Count * SizeOf(TPoint);
+  GetMem(TmpPts, AllocatedMem);
+  try
+    VisPoints := 0;
+    if ToBeClosed then
+     begin
+       for Cont := StartIdx + 1 to EndIdx + 1 do
+        begin
+          TmpPt1 := TransformPoint3D(PVectPoints3D(Vect)^[Cont - 1], NT);
+          if Cont > EndIdx then
+           TmpPt2 := TransformPoint3D(PVectPoints3D(Vect)^[StartIdx], NT)
+          else
+           TmpPt2 := TransformPoint3D(PVectPoints3D(Vect)^[Cont], NT);
+          ClipRes := ClipLine3D(TmpPt1, TmpPt2);
+          if not (ccNotVisible in ClipRes) then
+           begin
+             TmpPt12D := TransformPoint2D(Point3DToPoint2D(TmpPt1), VT);
+             TmpPts^[VisPoints] := Point2DToPoint(TmpPt12D);
+             Inc(VisPoints);
+           end;
+          if ccSecond in ClipRes then
+           begin
+             TmpPt22D := TransformPoint2D(Point3DToPoint2D(TmpPt2), VT);
+             TmpPts^[VisPoints] := Point2DToPoint(TmpPt22D);
+             Inc(VisPoints);
+             Cnv.Polyline(TmpPts, VisPoints);
+             VisPoints := 0;
+           end;
+        end;
+       if not (ccNotVisible in ClipRes) then
+        begin
+          TmpPt22D := TransformPoint2D(Point3DToPoint2D(TmpPt2), VT);
+          TmpPts^[VisPoints] := Point2DToPoint(TmpPt22D);
+          Inc(VisPoints);
+        end;
+     end
+    else
+     begin
+       for Cont := StartIdx + 1 to EndIdx do
+        begin
+          TmpPt1 := TransformPoint3D(PVectPoints3D(Vect)^[Cont - 1], NT);
+          TmpPt2 := TransformPoint3D(PVectPoints3D(Vect)^[Cont], NT);
+          ClipRes := ClipLine3D(TmpPt1, TmpPt2);
+          if not (ccNotVisible in ClipRes) then
+           begin
+             TmpPt12D := TransformPoint2D(Point3DToPoint2D(TmpPt1), VT);
+             TmpPts^[VisPoints] := Point2DToPoint(TmpPt12D);
+             Inc(VisPoints);
+           end;
+          if ccSecond in ClipRes then
+           begin
+             TmpPt22D := TransformPoint2D(Point3DToPoint2D(TmpPt2), VT);
+             TmpPts^[VisPoints] := Point2DToPoint(TmpPt22D);
+             Inc(VisPoints);
+             Cnv.Polyline(TmpPts, VisPoints);
+             VisPoints := 0;
+           end;
+        end;
+       if not (ccNotVisible in ClipRes) then
+        begin
+          TmpPt22D := TransformPoint2D(Point3DToPoint2D(TmpPt2), VT);
+          TmpPts^[VisPoints] := Point2DToPoint(TmpPt22D);
+          Inc(VisPoints);
+        end;
+      end;
+     if (VisPoints > 0)  then
+      Cnv.Polyline(TmpPts, VisPoints);
+  finally
+    FreeMem(TmpPts, AllocatedMem);
+  end;
+end;
+
+function DrawLine3D(const Cnv: TDecorativeCanvas; P1, P2: TPoint3D; const NT: TTransf3D; const VT: TTransf2D): Boolean;
+var
+  TmpPt13D, TmpPt23D: TPoint3D;
+  TmpPt1, TmpPt2: TPoint;
+  ClipRes: TClipResult;
+begin
+  TmpPt13D := TransformPoint3D(P1, NT);
+  TmpPt23D := TransformPoint3D(P2, NT);
+  ClipRes := ClipLine3D(TmpPt13D, TmpPt23D);
+  Result := not (ccNotVisible in ClipRes);
+  if Result then
+   begin
+     TmpPt1 := Point2DToPoint(TransformPoint2D(Point3DToPoint2D(TmpPt13D), VT));
+     TmpPt2 := Point2DToPoint(TransformPoint2D(Point3DToPoint2D(TmpPt23D), VT));
+     Cnv.MoveTo(TmpPt1.X, TmpPt1.Y);
+     Cnv.LineTo(TmpPt2.X, TmpPt2.Y);
+   end;
+end;
+
+procedure DrawBoundingBox3D(const Cnv: TDecorativeCanvas; const VRP: TPoint3D; Box: TRect3D; const NT: TTransf3D; const VT: TTransf2D);
+var
+  Cont: Integer;
+  VPN, N001, N010, N100: TVector3D;
+  BoxSegments: array [1..12, 1..2] of TPoint3D;
+  ViewedSegs: array [1..12] of Boolean;
+begin
+  // Determina i lati visibili
+
+  // Creo i segmenti del box.
+  with Box do
+   begin
+     BoxSegments[1][1] := Point3D(SecondEdge.X, SecondEdge.Y, SecondEdge.Z);
+     BoxSegments[1][2] := Point3D(FirstEdge.X, SecondEdge.Y, SecondEdge.Z);
+     BoxSegments[2][1] := BoxSegments[1][2];
+     BoxSegments[2][2] := Point3D(FirstEdge.X, FirstEdge.Y, SecondEdge.Z);
+
+     BoxSegments[3][1] := BoxSegments[2][2];
+     BoxSegments[3][2] := Point3D(SecondEdge.X, FirstEdge.Y, SecondEdge.Z);
+
+     BoxSegments[4][1] := BoxSegments[3][2];
+     BoxSegments[4][2] := Point3D(SecondEdge.X, SecondEdge.Y, SecondEdge.Z);
+
+     BoxSegments[9][1] := Point3D(SecondEdge.X, SecondEdge.Y, FirstEdge.Z);
+     BoxSegments[9][2] := Point3D(FirstEdge.X, SecondEdge.Y, FirstEdge.Z);
+
+     BoxSegments[10][1] := BoxSegments[9][2];
+     BoxSegments[10][2] := Point3D(FirstEdge.X, FirstEdge.Y, FirstEdge.Z);
+
+     BoxSegments[11][1] := BoxSegments[10][2];
+     BoxSegments[11][2] := Point3D(SecondEdge.X, FirstEdge.Y, FirstEdge.Z);
+
+     BoxSegments[12][1] := BoxSegments[11][2];
+     BoxSegments[12][2] := Point3D(SecondEdge.X, SecondEdge.Y, FirstEdge.Z);
+
+     BoxSegments[5][1] := BoxSegments[1][2];
+     BoxSegments[5][2] := BoxSegments[9][2];
+
+     BoxSegments[6][1] := BoxSegments[2][2];
+     BoxSegments[6][2] := BoxSegments[10][2];
+
+     BoxSegments[7][1] := BoxSegments[3][2];
+     BoxSegments[7][2] := BoxSegments[11][2];
+
+     BoxSegments[8][1] := BoxSegments[4][2];
+     BoxSegments[8][2] := BoxSegments[12][2];
+   end;
+
+  if Cnv.Canvas.Pen.Mode = pmXOr then
+   begin
+     for Cont := 1 to 12 do
+      ViewedSegs[Cont] := False;
+
+     N001 := NormalizeVector3D(TransformVector3D(Versor3D(0, 0, 1), NT));
+     N010 := NormalizeVector3D(TransformVector3D(Versor3D(0, 1, 0), NT));
+     N100 := NormalizeVector3D(TransformVector3D(Versor3D(1, 0, 0), NT));
+     { Casi particolari }
+     if IsSamePoint3D(BoxSegments[1][1], BoxSegments[1][2]) then
+      begin // Superfice in YZ
+        VPN := N010;
+        ViewedSegs[6] := VPN.Z <> -1.0;
+        ViewedSegs[5] := VPN.Z <> 1.0;
+        VPN := N001;
+        ViewedSegs[10] := VPN.Z <> -1.0;
+        ViewedSegs[2] := VPN.Z <> 1.0;
+      end
+     else if IsSamePoint3D(BoxSegments[2][1], BoxSegments[2][2]) then
+      begin // Superfice in XZ
+        VPN := N100;
+        ViewedSegs[6] := VPN.Z <> -1.0;
+        ViewedSegs[7] := VPN.Z <> 1.0;
+        VPN := N001;
+        ViewedSegs[11] := VPN.Z <> -1.0;
+        ViewedSegs[3] := VPN.Z <> 1.0;
+      end
+     else if IsSamePoint3D(BoxSegments[5][1], BoxSegments[5][2]) then
+      begin // Superfice in XY
+        VPN := N100;
+        ViewedSegs[10] := VPN.Z <> -1.0;
+        ViewedSegs[12] := VPN.Z <> 1.0;
+        VPN := N001;
+        ViewedSegs[11] := VPN.Z <> -1.0;
+        ViewedSegs[9] := VPN.Z <> 1.0;
+      end
+     else
+      begin
+        VPN := Reflect3D(N100);
+        if VPN.Z < 0 then
+         begin
+           ViewedSegs[2] := True;
+           ViewedSegs[6] := True;
+           ViewedSegs[10] := True;
+           ViewedSegs[5] := True;
+         end
+        else if VPN.Z > 0 then
+         begin
+           ViewedSegs[4] := True;
+           ViewedSegs[7] := True;
+           ViewedSegs[12] := True;
+           ViewedSegs[8] := True;
+         end;
+        VPN := Reflect3D(N010);
+        if VPN.Z < 0 then
+         begin
+           ViewedSegs[6] := True;
+           ViewedSegs[3] := True;
+           ViewedSegs[7] := True;
+           ViewedSegs[11] := True;
+         end
+        else if VPN.Z > 0 then
+         begin
+           ViewedSegs[5] := True;
+           ViewedSegs[1] := True;
+           ViewedSegs[8] := True;
+           ViewedSegs[9] := True;
+         end;
+        VPN := Reflect3D(N001);
+        if VPN.Z < 0 then
+         begin
+           ViewedSegs[9] := True;
+           ViewedSegs[10] := True;
+           ViewedSegs[11] := True;
+           ViewedSegs[12] := True;
+         end
+        else if VPN.Z > 0 then
+         begin
+           ViewedSegs[1] := True;
+           ViewedSegs[2] := True;
+           ViewedSegs[3] := True;
+           ViewedSegs[4] := True;
+         end;
+      end;
+   end
+  else
+   for Cont := 1 to 12 do
+    ViewedSegs[Cont] := True;
+
+  // Disegno i lati.
+  for Cont := 1 to 12 do
+   if ViewedSegs[Cont] then
+    DrawLine3D(Cnv, BoxSegments[Cont][1], BoxSegments[Cont][2],  NT, VT);
+end;
+
 // =====================================================================
 // TPointsSet2D
 // =====================================================================
@@ -8102,11 +12719,23 @@ procedure TPointsSet2D.AddPoints(const Items: array of TPoint2D);
 var
   Cont: Integer;
 begin
-  if (not fGrownEnabled) and (High(Items) - Low(Items) > fCapacity) then
+  if (not fGrownEnabled) and (fCount + High(Items) - Low(Items) > fCapacity) then
    Raise ECADOutOfBound.Create('TPointsSet2D.AddPoints: Vector out of bound');
-  Expand(fCapacity + High(Items) - Low(Items) + 1);
+  Expand(fCount + High(Items) - Low(Items) + 1);
   for Cont := Low(Items) to High(Items) do
    Put(fCount, fCount, Items[Cont]);
+  CallOnChange;
+end;
+
+procedure TPointsSet2D.AddPoints(const SourceSet: TPointsSet2D); overload;
+var
+  Cont: Integer;
+begin
+  if (not fGrownEnabled) and (fCount + SourceSet.Count > fCapacity) then
+   Raise ECADOutOfBound.Create('TPointsSet2D.AddPoints: Vector out of bound');
+  Expand(fCount + SourceSet.Count + 1);
+  for Cont := 0 to SourceSet.Count - 1 do
+   Put(fCount, fCount, SourceSet[Cont]);
   CallOnChange;
 end;
 
@@ -8201,6 +12830,245 @@ begin
 end;
 
 // =====================================================================
+// TPointsSet3D
+// =====================================================================
+
+procedure TPointsSet3D.Expand(const NewCapacity: Integer);
+var
+  Cont: Integer;
+begin
+  if NewCapacity <= fCapacity then
+   Exit;
+  ReAllocMem(fPoints, NewCapacity * SizeOf(TPoint3D));
+  for Cont := fCapacity to NewCapacity - 1 do
+   with PVectPoints3D(FPoints)^[Cont] do
+    begin
+      X := 0;
+      Y := 0;
+      X := 0;
+      W := 1.0;
+    end;
+  fCapacity := NewCapacity;
+end;
+
+procedure TPointsSet3D.CallOnChange;
+begin
+  if (not fDisableEvents) and Assigned(fOnChange) then
+   begin
+     fDisableEvents := True;
+     try
+      fOnChange(Self);
+     finally
+      fDisableEvents := False;
+     end;
+   end;
+end;
+
+constructor TPointsSet3D.Create(const _Capacity: Word);
+begin
+  inherited Create;
+  fCount := 0;
+  fCapacity := _Capacity;
+  GetMem(fPoints, fCapacity * SizeOf(TPoint3D));
+  fDisableEvents := False;
+  fGrownEnabled := True;
+  fTag := 0;
+end;
+
+destructor TPointsSet3D.Destroy;
+begin
+  FreeMem(fPoints, fCapacity * SizeOf(TPoint3D));
+  inherited Destroy;
+end;
+
+function TPointsSet3D.Get(Index: Word): TPoint3D;
+begin
+  if Index < fCount then
+   Result := PVectPoints3D(FPoints)^[Index]
+  else
+   Raise ECADOutOfBound.Create('TPointsSet3D.Get: Vector out of bound');
+end;
+
+function TPointsSet3D.GetExtension: TRect3D;
+var
+  Cont: Integer;
+  TmpPt: TPoint3D;
+begin
+  Result := Rect3D(0, 0, 0, 0, 0, 0);
+  if FCount = 0 then
+   Exit;
+  TmpPt := CartesianPoint3D(PVectPoints3D(FPoints)^[0]);
+  Result.FirstEdge := TmpPt;
+  Result.SecondEdge := TmpPt;
+  for Cont := 1 to FCount - 1 do
+   begin
+     TmpPt := CartesianPoint3D(PVectPoints3D(FPoints)^[Cont]);
+     if TmpPt.X > Result.SecondEdge.X then
+      Result.SecondEdge.X := TmpPt.X
+     else if TmpPt.X < Result.FirstEdge.X then
+      Result.FirstEdge.X := TmpPt.X;
+     if TmpPt.Y > Result.SecondEdge.Y then
+      Result.SecondEdge.Y := TmpPt.Y
+     else if TmpPt.Y < Result.FirstEdge.Y then
+      Result.FirstEdge.Y := TmpPt.Y;
+     if TmpPt.Z > Result.SecondEdge.Z then
+      Result.SecondEdge.Z := TmpPt.Z
+     else if TmpPt.Z < Result.FirstEdge.Z then
+      Result.FirstEdge.Z := TmpPt.Z;
+   end;
+end;
+
+procedure TPointsSet3D.PutProp(Index: Word; const Item: TPoint3D);
+begin
+  Put(Index, Index, Item);
+  CallOnChange;
+end;
+
+procedure TPointsSet3D.Put(PutIndex, ItemIndex: Word; const Item: TPoint3D);
+begin
+  if PutIndex < fCapacity then
+   begin
+     PVectPoints3D(FPoints)^[PutIndex] := Item;
+     if PutIndex >= FCount then FCount := PutIndex + 1;
+   end
+  else if FGrownEnabled then
+   begin
+     { Grow the vector }
+     Expand(MaxIntValue([PutIndex + 1, fCapacity * 2 + 1]));
+     PVectPoints3D(FPoints)^[PutIndex] := Item;
+     Inc(FCount);
+   end
+  else
+   Raise ECADOutOfBound.Create('TPointsSet3D.Put: Vector out of bound');
+end;
+
+procedure TPointsSet3D.Add(const Item: TPoint3D);
+begin
+  PutProp(FCount, Item);
+end;
+
+procedure TPointsSet3D.AddPoints(const Items: array of TPoint3D);
+var
+  Cont: Integer;
+begin
+  if (not FGrownEnabled) and (fCount + High(Items) - Low(Items) > fCapacity) then
+   Raise ECADOutOfBound.Create('TPointsSet3D.AddPoints: Vector out of bound');
+  Expand(fCount + High(Items) - Low(Items) + 1);
+  for Cont := Low(Items) to High(Items) do
+   Put(FCount, FCount, Items[Cont]);
+  { Now post only one OnChange event. }
+  CallOnChange;
+end;
+
+procedure TPointsSet3D.AddPoints(const SourceSet: TPointsSet3D); overload;
+var
+  Cont: Integer;
+begin
+  if (not fGrownEnabled) and (fCount + SourceSet.Count > fCapacity) then
+   Raise ECADOutOfBound.Create('TPointsSet3D.AddPoints: Vector out of bound');
+  Expand(fCount + SourceSet.Count + 1);
+  for Cont := 0 to SourceSet.Count - 1 do
+   Put(fCount, fCount, SourceSet[Cont]);
+  CallOnChange;
+end;
+
+procedure TPointsSet3D.Clear;
+begin
+  FCount := 0;
+end;
+
+procedure TPointsSet3D.Delete(const Index: Word);
+var
+  Cont: Integer;
+begin
+  if Index < FCount then
+   begin
+     for Cont := Index to FCount - 2 do
+      Put(Cont, Cont + 1, PVectPoints3D(FPoints)^[Cont + 1]);
+     Dec(FCount);
+     CallOnChange;
+   end
+  else
+   Raise ECADOutOfBound.Create('TPointsSet3D.Delete: Vector out of bound');
+end;
+
+procedure TPointsSet3D.Insert(const Index: Word; const Item: TPoint3D);
+var
+  Cont: Integer;
+begin
+  if Index >= FCount then
+   Raise ECADOutOfBound.Create('TPointsSet3D.Insert: Vector out of bound');
+  { Make the space for the new item. }
+  Put(FCount, FCount, Item);
+  { Insert the item. }
+  for Cont := FCount - 1 downto Index + 1 do
+   Put(Cont, Cont - 1, PVectPoints3D(FPoints)^[Cont - 1]);
+  Put(Index, Index, Item);
+  CallOnChange;
+end;
+
+procedure TPointsSet3D.TransformPoints(const T: TTransf3D);
+var
+  Cont: Integer;
+  TmpPt: TPoint3D;
+begin
+  for Cont := 0 to fCount - 1 do
+   begin
+     TmpPt := TransformPoint3D(PVectPoints3D(fPoints)^[Cont], T);
+     PVectPoints3D(fPoints)^[Cont] := TmpPt;
+   end;
+  CallOnChange;
+end;
+
+procedure TPointsSet3D.FrontFace(const N: TVector3D);
+var
+  Cont, Max: Integer;
+  SwapPt: TPoint3D;
+begin
+  if DotProduct3D(GetVectNormal(fPoints, fCount), N) < 0 then
+   begin
+     Max := fCount - 1;
+     for Cont := 0 to Max div 2 do
+      begin
+        SwapPt := PVectPoints3D(fPoints)^[Cont];
+        Put(Cont, Max - Cont, PVectPoints3D(fPoints)^[Max - Cont]);
+        Put(Max - Cont, Cont, SwapPt);
+      end;
+   end;
+end;
+
+procedure TPointsSet3D.Copy(const S: TPointsSet3D; const StIdx, EndIdx: Integer);
+var
+  Cont: Integer;
+begin
+  try
+    Expand(EndIdx + 1);
+    for Cont := StIdx to EndIdx do
+     Put(Cont, Cont, S[Cont]);
+    CallOnChange;
+  except
+  end;
+end;
+
+procedure TPointsSet3D.DrawAsPolyline(const Cnv: TDecorativeCanvas;
+                                 const Extent: TRect3D;
+                                 const NT: TTransf3D;
+                                 const VT: TTransf2D);
+begin
+  Draw3DSubSetAsPolyline(fPoints, fCount, Cnv, Extent, NT, VT, 0, fCount - 1, False);
+end;
+
+procedure TPointsSet3D.DrawSubSetAsPolyline(const Cnv: TDecorativeCanvas;
+                                             const Extent: TRect3D;
+                                             const NT: TTransf3D;
+                                             const VT: TTransf2D;
+                                             const StartIdx, EndIdx: Integer;
+                                             const ToBeClosed: Boolean);
+begin
+  Draw3DSubSetAsPolyline(fPoints, fCount, Cnv, Extent, NT, VT, StartIdx, EndIdx, ToBeClosed);
+end;
+
+// =====================================================================
 // TGraphicObject 
 // =====================================================================
 
@@ -8226,6 +13094,7 @@ begin
    begin
      Read(fID, SizeOf(fID));
      Read(fLayer, SizeOf(fLayer));
+     BitMask := 0;
      Read(BitMask, SizeOf(BitMask))
    end;
   fVisible := (BitMask and 1) = 1;
@@ -8277,12 +13146,12 @@ var
   Cont: Integer;
 begin
   for Cont := 0 to MAX_REGISTERED_CLASSES - 1 do
-   if Assigned(GraphicObjectsRegistered[Cont]) and
-      (GraphicObjectsRegistered[Cont].ClassName = Name) then
-    begin
-      Result := Cont;
-      Exit;
-    end;
+    if Assigned(GraphicObjectsRegistered[Cont]) and
+       (GraphicObjectsRegistered[Cont].ClassName = Name) then
+     begin
+       Result := Cont;
+       Exit;
+     end;
   Raise ECADObjClassNotFound.Create('CADSysFindClassIndex: ' + Name + ' graphic class not found');
 end;
 
@@ -8856,7 +13725,6 @@ end;
 
 type
   TIdxObjListArray = array[0..0] of TObject;
-  PIdxObjListArray = ^TIdxObjListArray;
 
 procedure TIndexedObjectList.SetListSize(N: Integer);
 var
@@ -9121,18 +13989,19 @@ var
   TmpBrushStyle: TBrushStyle;
   TmpBool: Boolean;
 begin
-  Stream.Read(TmpColor, SizeOf(TmpColor));
+  Stream.Read({%H-}TmpColor, SizeOf(TmpColor));
   fPen.Color := TmpColor;
-  Stream.Read(TmpPenStyle, SizeOf(TmpPenStyle));
+  Stream.Read({%H-}TmpPenStyle, SizeOf(TmpPenStyle));
   fPen.Style := TmpPenStyle;
-  Stream.Read(TmpPenMode, SizeOf(TmpPenMode));
+  Stream.Read({%H-}TmpPenMode, SizeOf(TmpPenMode));
   fPen.Mode := TmpPenMode;
+  TmpWidth := 0;
   Stream.Read(TmpWidth, SizeOf(TmpWidth));
   fPen.Width := TmpWidth;
 
   Stream.Read(TmpColor, SizeOf(TmpColor));
   fBrush.Color := TmpColor;
-  Stream.Read(TmpBrushStyle, SizeOf(TmpBrushStyle));
+  Stream.Read({%H-}TmpBrushStyle, SizeOf(TmpBrushStyle));
   fBrush.Style := TmpBrushStyle;
   if( Version < 'CAD422' ) then
    Stream.Read(TmpColor, SizeOf(TmpColor));
@@ -9142,6 +14011,7 @@ begin
      Stream.Read(TmpWidth, SizeOf(TmpWidth));
      for TmpCont := 0 to TmpWidth - 1 do
       begin
+        TmpBool := False;
         Stream.Read(TmpBool, SizeOf(TmpBool));
         fDecorativePen.PenStyle[TmpCont] := TmpBool;
       end;
@@ -9252,6 +14122,7 @@ procedure TLayers.LoadFromStream(const Stream: TStream;
 var
   Cont: Word;
 begin
+  Cont := 0;
   Stream.Read(Cont, SizeOf(Cont));
   if Cont <> 1 then Raise
    ECADFileNotValid.Create('TLayers.LoadFromStream: No layers found');
@@ -9453,15 +14324,18 @@ var
 begin
   with Stream do
    begin
-     Read(TmpVersion, SizeOf(TmpVersion));
+     Read({%H-}TmpVersion, SizeOf(TmpVersion));
      TmpBool := TmpVersion = CADSysVersion;
      if (not TmpBool) and Assigned(fOnVerError) then
-      fOnVerError(Self, stDrawing, Stream, TmpBool);
+      fOnVerError(Self, stDrawing, Stream, TmpBool)
+     else if (not TmpBool) and Assigned(fOnVerErrorEx) then
+      fOnVerErrorEx(Self, stDrawing, Stream, TmpVersion, TmpBool);
      if TmpBool then
       begin
         { Load the layer informations. }
         FLayers.LoadFromStream(Stream, TmpVersion);
         { Load the source blocks. }
+        TmpByte := 0;
         Read(TmpByte, SizeOf(TmpByte));
         if TmpByte <> 2 then
          Raise ECADFileNotValid.Create('TCADCmp.MergeFromStream: no blocks found');
@@ -9493,13 +14367,16 @@ var
 begin
   with Stream do
    begin
-     Read(TmpVersion, SizeOf(TmpVersion));
+     Read({%H-}TmpVersion, SizeOf(TmpVersion));
      TmpBool := TmpVersion = CADSysVersion;
      if (not TmpBool) and Assigned(fOnVerError) then
-      fOnVerError(Self, stLibrary, Stream, TmpBool);
+      fOnVerError(Self, stLibrary, Stream, TmpBool)
+     else if (not TmpBool) and Assigned(fOnVerErrorEx) then
+      fOnVerErrorEx(Self, stLibrary, Stream, TmpVersion, TmpBool);
      if TmpBool then
       begin
         { Load the source blocks. }
+        TmpByte := 0;
         Read(TmpByte, SizeOf(TmpByte));
         if TmpByte <> 2 then
          Raise ECADFileNotValid.Create('TCADCmp.LoadLibrary: no blocks found');
@@ -10168,7 +15045,7 @@ begin
    begin
      fPaintingThread := TPaintingThread.Create(Self, ARect);
      TPaintingThread(fPaintingThread).OnTerminate := OnThreadEnded;
-     TPaintingThread(fPaintingThread).Resume;
+     TPaintingThread(fPaintingThread).Start;
    end
   else
    try
@@ -10863,12 +15740,24 @@ end;
 constructor TObject2D.CreateFromStream(const Stream: TStream; const Version: TCADVersion);
 var
   TmpTransf: TTransf2D;
+  TmpTransfS: TTransf2DSingle;
 begin
   inherited;
   with Stream do
    begin
-     Read(TmpTransf, sizeof(TTransf2D));
-     SaveTransform(TmpTransf);
+     if( Version >= 'CAD423' ) then
+      begin
+        Read({%H-}TmpTransf, sizeof(TTransf2D));
+        SaveTransform(TmpTransf);
+      end
+     else
+      begin
+        Read({%H-}TmpTransfS, sizeof(TTransf2DSingle));
+        TmpTransf[1, 1] := TmpTransfS[1, 1]; TmpTransf[1, 2] := TmpTransfS[1, 2]; TmpTransf[1, 3] := TmpTransfS[1, 3];
+        TmpTransf[2, 1] := TmpTransfS[2, 1]; TmpTransf[2, 2] := TmpTransfS[2, 2]; TmpTransf[2, 3] := TmpTransfS[2, 3];
+        TmpTransf[3, 1] := TmpTransfS[3, 1]; TmpTransf[3, 2] := TmpTransfS[3, 2]; TmpTransf[3, 3] := TmpTransfS[3, 3];
+        SaveTransform(TmpTransf);
+      end;
    end;
   fHandler := nil;
 end;
@@ -11152,6 +16041,7 @@ begin
   with Stream do
    begin
      { Read the number of objects in the container. }
+     TmpLong := 0;
      Read(TmpLong, SizeOf(TmpLong));
      fObjects := TGraphicObjList.Create;
      fObjects.FreeOnClear := True;
@@ -11159,6 +16049,7 @@ begin
      while TmpLong > 0 do
       begin
         { Read the type of object. }
+        TmpWord := 0;
         Read(TmpWord, SizeOf(TmpWord));
         { Retrive the class type from the registered classes. }
         TmpClass := CADSysFindClassByIndex(TmpWord);
@@ -11401,6 +16292,8 @@ begin
 end;
 
 constructor TBlock2D.CreateFromStream(const Stream: TStream; const Version: TCADVersion);
+var
+  origPS: TPoint2DSingle;
 begin
   { Load the standard properties }
   inherited;
@@ -11408,7 +16301,18 @@ begin
    begin
      { TCADCmp will use the value of FSourceName to find out the reference of the source block. }
      Read(fSourceName, SizeOf(fSourceName));
-     Read(fOriginPoint, SizeOf(fOriginPoint));
+     if( Version >= 'CAD423' ) then
+      begin
+        Read(fOriginPoint, SizeOf(fOriginPoint));
+      end
+     else
+      begin
+        origPS.X:=0;origPS.Y:=0;origPS.W:=0;
+        Read(origPS, SizeOf(origPS));
+        fOriginPoint.X := origPS.X;
+        fOriginPoint.Y := origPS.Y;
+        fOriginPoint.W := origPS.W;
+      end;
    end;
   fSourceBlock := nil;
 end;
@@ -11575,6 +16479,7 @@ begin
   TmpBlocksIter := SourceBlocksExclusiveIterator;
   with Stream do
    try
+     TmpLong := 0;
      Read(TmpLong, SizeOf(TmpLong));
      if TmpLong > 0 then
       TmpObjPerc := 100 div TmpLong
@@ -11583,6 +16488,7 @@ begin
      while TmpLong > 0 do
       begin
         { Read the type of object and the length of the record. }
+        TmpWord := 0;
         Read(TmpWord, SizeOf(TmpWord));
         if TmpWord = 65535 then
          { End prematurely. }
@@ -11686,10 +16592,12 @@ begin
   with Stream do
    begin
      { Load the source blocks. }
+     TmpLong := 0;
      Read(TmpLong, SizeOf(TmpLong));
      while TmpLong > 0 do
       begin
         { Read the type of object and the length of the record. }
+        TmpWord := 0;
         Read(TmpWord, SizeOf(TmpWord));
         Dec(TmpLong);
         { Retrive the class type from the registered classes. }
@@ -12110,7 +17018,7 @@ begin
    end;
   NewWindow2D := fCADCmp2D.DrawingExtension;
   Marg := Abs(NewWindow2D.Right - NewWindow2D.Left) / 20;
-  Marg := MaxValue([Marg, Abs(NewWindow2D.Top - NewWindow2D.Bottom) / 20]);
+  Marg := {%H-}MaxValue([Marg, Abs(NewWindow2D.Top - NewWindow2D.Bottom) / 20]);
   NewWindow2D.Left := NewWindow2D.Left - Marg;
   NewWindow2D.Right := NewWindow2D.Right + Marg;
   NewWindow2D.Bottom := NewWindow2D.Bottom - Marg;
@@ -12196,6 +17104,7 @@ begin
       begin
         if Active and Visible and (Tmp is FPickFilter) and Tmp.IsVisible(VisualRect, DrawMode) then
          begin
+           Distance := 0;
            TmpNPoint := Tmp.OnMe(Pt, WAperture, Distance);
            if (TmpNPoint >= NPoint) and (Distance <= MinDist) then
             begin
@@ -12238,6 +17147,7 @@ begin
       begin
         if Active and Visible and (Tmp is FPickFilter) and Tmp.IsVisible(VisualRect, DrawMode) then
          begin
+           Distance := 0;
            if Tmp.OnMe(Pt, WAperture, Distance) > PICK_NOOBJECT then
             begin
               PickedObjects.Add(Tmp);
@@ -12310,6 +17220,2169 @@ function TCADViewport2D.BuildViewportTransform(var ViewWin: TRect2D;
                                                const AspectRatio: TRealType): TTransf2D;
 begin
   Result := GetVisualTransform2D(ViewWin, ScreenWin, AspectRatio);
+end;
+
+// =====================================================================
+// TObject3DHandler
+// =====================================================================
+
+constructor TObject3DHandler.Create(AObject: TObject3D);
+begin
+  inherited Create;
+
+  fHandledObject := AObject;
+  fRefCount := 1;
+end;
+
+destructor TObject3DHandler.Destroy;
+begin
+  if Assigned(fHandledObject) then
+   fHandledObject.fHandler := nil;
+  inherited;
+end;
+
+procedure TObject3DHandler.FreeInstance;
+begin
+  Dec(fRefCount);
+  if fRefCount > 0 then
+   Exit;
+  inherited;
+end;
+
+// =====================================================================
+// TObject3D
+// =====================================================================
+
+constructor TObject3D.Create(ID: LongInt);
+begin
+  { Initialize the object. }
+  inherited Create(ID);
+  FBox := Rect3D(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+  FModelTransform := nil;
+  fSavedTransform := nil;
+  fDrawBoundingBox := True;
+end;
+
+destructor TObject3D.Destroy;
+begin
+  if Assigned(fHandler) then
+   fHandler.Free;
+  if fModelTransform <> nil then
+   FreeMem(fModelTransform, SizeOf(TTransf3D));
+  if fSavedTransform <> nil then
+   FreeMem(fSavedTransform, SizeOf(TTransf2D));
+  inherited Destroy;
+end;
+
+constructor TObject3D.CreateFromStream(const Stream: TStream; const Version: TCADVersion);
+var
+  TmpTransf: TTransf3D;
+  TmpTransfS: TTransf3DSingle;
+begin
+  inherited;
+  with Stream do
+   begin
+     if( Version >= 'CAD423' ) then
+      begin
+        Read({%H-}TmpTransf, sizeof(TTransf3D));
+        SaveTransform(TmpTransf);
+      end
+     else
+      begin
+        Read({%H-}TmpTransfS, sizeof(TTransf3DSingle));
+        TmpTransf[1, 1] := TmpTransfS[1, 1]; TmpTransf[1, 2] := TmpTransfS[1, 2]; TmpTransf[1, 3] := TmpTransfS[1, 3]; TmpTransf[1, 4] := TmpTransfS[1, 4];
+        TmpTransf[2, 1] := TmpTransfS[2, 1]; TmpTransf[2, 2] := TmpTransfS[2, 2]; TmpTransf[2, 3] := TmpTransfS[2, 3]; TmpTransf[2, 4] := TmpTransfS[2, 4];
+        TmpTransf[3, 1] := TmpTransfS[3, 1]; TmpTransf[3, 2] := TmpTransfS[3, 2]; TmpTransf[3, 3] := TmpTransfS[3, 3]; TmpTransf[3, 4] := TmpTransfS[3, 4];
+        TmpTransf[4, 1] := TmpTransfS[4, 1]; TmpTransf[4, 2] := TmpTransfS[4, 2]; TmpTransf[4, 3] := TmpTransfS[4, 3]; TmpTransf[4, 4] := TmpTransfS[4, 4];
+        SaveTransform(TmpTransf);
+      end;
+   end;
+  FBox := Rect3D(MinCoord, MinCoord, MinCoord, MaxCoord, MaxCoord, MaxCoord);
+  fDrawBoundingBox := True;
+end;
+
+procedure TObject3D.SaveToStream(const Stream: TStream);
+var
+  TmpTransf: TTransf3D;
+begin
+  inherited SaveToStream(Stream);
+  with Stream do
+   begin
+     SaveTransform(ModelTransform);
+     TmpTransf := ModelTransform;
+     Write(TmpTransf, SizeOf(TTransf3D));
+   end;
+end;
+
+procedure TObject3D.Assign(const Obj: TGraphicObject);
+begin
+  if (Obj = Self) then
+   Exit;
+  inherited Assign(Obj);
+  if Obj is TObject3D then
+   begin
+     SaveTransform(TObject3D(Obj).ModelTransform);
+     fBox := TObject3D(Obj).fBox;
+     if fHandler <> TObject3D(Obj).fHandler then
+      SetSharedHandler(TObject3D(Obj).fHandler);
+   end;
+end;
+
+function TObject3D.OnMe(P: TPoint3D; const NormTransf: TTransf3D; Aperture: TRealType; var Distance: TRealType): Integer;
+var
+  TmpBox: TRect2D;
+begin
+  TmpBox := EnlargeBoxDelta2D(GetBox2DExtension3D(Box, NormTransf), Aperture);
+  Distance := MaxCoord;
+  Result := PICK_NOOBJECT;
+  if not FEnabled then
+   Exit;
+  if IsPointInCartesianBox2D(Point3DToPoint2D(P), TmpBox) then
+   begin
+     Result := PICK_INBBOX;
+     Distance := Aperture;
+   end;
+  if Assigned(fHandler) then
+   Result := MaxIntValue([Result, fHandler.OnMe(Self, P, NormTransf, Aperture, Distance)]);
+end;
+
+procedure TObject3D.DrawControlPoints(const NormTransf: TTransf3D; const VRP: TPoint3D; const VT: TTransf2D;
+                                      const Cnv: TDecorativeCanvas; const Width: Integer);
+begin
+  { Draw the bounding box. }
+  with Cnv do
+   if fDrawBoundingBox and (Canvas.Pen.Mode <> pmXOr) then
+    DrawBoundingBox3D(Cnv, VRP, fBox, NormTransf, VT);
+  if Assigned(fHandler) then
+   fHandler.DrawControlPoints(Self, NormTransf, VRP, VT, Cnv, Width);
+end;
+
+function TObject3D.WorldToObject(const Pt: TPoint3D): TPoint3D;
+begin
+  if HasTransform then
+   Result := TransformPoint3D(Pt, InvertTransform3D(ModelTransform))
+  else
+   Result := Pt;
+end;
+
+procedure TObject3D.MoveTo(ToPt, DragPt: TPoint3D);
+var
+  TmpTransf: TTransf3D;
+begin
+  { Traslate the bounds rect. }
+  ToPt := CartesianPoint3D(ToPt);
+  DragPt := CartesianPoint3D(DragPt);
+  TmpTransf := Translate3D(ToPt.X - DragPt.X, ToPt.Y - DragPt.Y, ToPt.Z - DragPt.Z);
+  { Traslate the object. }
+  Transform(TmpTransf);
+end;
+
+procedure TObject3D.SetModelTransform(Transf: TTransf3D);
+begin
+  if IsSameTransform3D(Transf, IdentityTransf3D) then
+   begin
+     if (fModelTransform <> nil) then
+      FreeMem(fModelTransform, SizeOf(TTransf3D));
+     fModelTransform := nil;
+   end
+  else if fModelTransform = nil then
+   begin
+     GetMem(fModelTransform, SizeOf(TTransf3D));
+     fModelTransform^ := Transf;
+   end
+  else
+   fModelTransform^ := Transf;
+  UpdateExtension(Self);
+end;
+
+function TObject3D.GetObjectFaces(var I: Integer; FacePts: TPointsSet3D; var FaceNormal: TVector3D; var FaceID: Integer): Boolean;
+begin
+  Result := False;
+end;
+
+procedure TObject3D.RemoveTransform;
+begin
+  if (fSavedTransform <> nil) then
+   FreeMem(fSavedTransform, SizeOf(TTransf3D));
+  fSavedTransform := nil;
+  SetModelTransform(IdentityTransf3D);
+end;
+
+procedure TObject3D.SaveTransform(const T: TTransf3D);
+begin
+  if IsSameTransform3D(T, IdentityTransf3D) then
+   begin
+     if (fSavedTransform <> nil) then
+      FreeMem(fSavedTransform, SizeOf(TTransf3D));
+     fSavedTransform := nil;
+   end
+  else if fSavedTransform = nil then
+   begin
+     GetMem(fSavedTransform, SizeOf(TTransf3D));
+     fSavedTransform^ := T;
+   end
+  else
+   fSavedTransform^ := T;
+  if (fModelTransform <> nil) then
+   FreeMem(fModelTransform, SizeOf(TTransf3D));
+  fModelTransform := nil;
+end;
+
+function TObject3D.GetModelTransform: TTransf3D;
+begin
+  if fModelTransform <> nil then
+   Result := fModelTransform^
+  else
+   Result := IdentityTransf3D;
+  if Assigned(fSavedTransform) then
+   Result := MultiplyTransform3D(fSavedTransform^, Result);
+end;
+
+function TObject3D.HasTransform: Boolean;
+begin
+  Result := (fModelTransform <> nil) or (fSavedTransform <> nil);
+end;
+
+procedure TObject3D.Transform(T: TTransf3D);
+begin
+  if fModelTransform <> nil then
+   SetModelTransform(MultiplyTransform3D(fModelTransform^, T))
+  else
+   SetModelTransform(T);
+end;
+
+procedure TObject3D.ApplyTransform;
+begin
+  SaveTransform(ModelTransform);
+end;
+
+function TObject3D.IsVisible(const NormTransf: TTransf3D; const VRP: TPoint3D; const DrawMode: Integer): Boolean;
+var
+  TmpBox: TRect3D;
+begin
+  Result := False;
+  if not Visible then
+   Exit;
+  TmpBox := TransformBoundingBox3D(FBox, NormTransf);
+  Result := IsVisibleBoxNRC3D(TmpBox);
+end;
+
+procedure TObject3D.SetSharedHandler(const Hndl: TObject3DHandler);
+begin
+  if Assigned(fHandler) then
+   fHandler.Free;
+  fHandler := Hndl;
+  if( Hndl <> nil ) then
+   Inc(fHandler.fRefCount);
+end;
+
+procedure TObject3D.SetHandler(const Hndl: TObject3DHandlerClass);
+begin
+  if Assigned(fHandler) then
+   fHandler.Free;
+  if( Hndl <> nil ) then
+   fHandler := Hndl.Create(Self)
+  else
+   fHandler := nil;
+end;
+
+// =====================================================================
+// TContainer3D
+// =====================================================================
+
+constructor TContainer3D.Create(ID: LongInt; const Objs: array of TObject3D);
+var
+  Cont: Word;
+begin
+  inherited Create(ID);
+  FObjects := TGraphicObjList.Create;
+  FObjects.FreeOnClear := True;
+  if Objs[Low(Objs)] <> nil then
+   FBox := Objs[Low(Objs)].Box;
+  { add eventually objects. }
+  for Cont := Low(Objs) to High(Objs) do
+   if Objs[Cont] <> nil then
+    begin
+      FObjects.Add(Objs[Cont]);
+      { Get new FBox. }
+      FBox := BoxOutBox3D(FBox, Objs[Cont].Box);
+    end;
+end;
+
+procedure TContainer3D._UpdateExtension;
+var
+  TmpIter: TGraphicObjIterator;
+begin
+  // Crea un iterator temporaneo.
+  TmpIter := fObjects.GetIterator;
+  try
+    if TmpIter.Count = 0 then
+     begin
+       fBox := Rect3D(0, 0, 0, 0, 0 , 0);
+       Exit;
+     end;
+    fBox := TObject3D(TmpIter.Current).Box;
+    while TmpIter.Next <> nil do
+     { Get new FBox. }
+     fBox := BoxOutBox3D(FBox, TObject3D(TmpIter.Current).Box);
+    if HasTransform then
+     fBox := TransformBoundingBox3D(fBox, ModelTransform);
+  finally // Libera l'iterator
+    TmpIter.Free;
+  end;
+end;
+
+destructor TContainer3D.Destroy;
+begin
+  fObjects.Free;
+  inherited Destroy;
+end;
+
+procedure TContainer3D.SaveToStream(const Stream: TStream);
+var
+  TmpObj: TObject3D;
+  TmpLong: LongInt;
+  TmpWord: Word;
+  TmpIter: TGraphicObjIterator;
+begin
+  inherited SaveToStream(Stream);
+  // Crea un iterator temporaneo.
+  TmpIter := fObjects.GetIterator;
+  with Stream do
+   try
+     { Write the number of objects in the container. }
+     TmpLong := fObjects.Count;
+     Write(TmpLong, SizeOf(TmpLong));
+     { Now write the objects in the container. }
+     TmpObj := TObject3D(TmpIter.First);
+     while TmpObj <> nil do
+      begin
+        { Save the object. }
+        TmpWord := CADSysFindClassIndex(TmpObj.ClassName);
+        { Save the class index. }
+        Write(TmpWord, SizeOf(TmpWord));
+        TmpObj.SaveToStream(Stream);
+        TmpObj := TObject3D(TmpIter.Next);
+     end;
+   finally
+     TmpIter.Free;
+   end;
+end;
+
+constructor TContainer3D.CreateFromStream(const Stream: TStream; const Version: TCADVersion);
+var
+  TmpClass: TGraphicObjectClass;
+  TmpObj: TGraphicObject;
+  TmpLong: LongInt;
+  TmpWord: Word;
+begin
+  inherited;
+  with Stream do
+   begin
+     { Read the number of objects in the container. }
+     TmpLong := 0;
+     Read(TmpLong, SizeOf(TmpLong));
+     fObjects := TGraphicObjList.Create;
+     fObjects.FreeOnClear := True;
+     { Now read the object for the container. }
+     while TmpLong > 0 do
+      begin
+        { Read the type of object. }
+        TmpWord := 0;
+        Read(TmpWord, SizeOf(TmpWord));
+        { Retrive the class type from the registered classes. }
+        TmpClass := CADSysFindClassByIndex(TmpWord);
+        TmpObj := TmpClass.CreateFromStream(Stream, Version);
+        TmpObj.UpdateExtension(Self);
+        fObjects.Add(TmpObj);
+        Dec(TmpLong);
+     end;
+   end;
+  UpdateExtension(Self);
+end;
+
+procedure TContainer3D.Assign(const Obj: TGraphicObject);
+var
+  TmpIter: TGraphicObjIterator;
+  TmpClass: TGraphicObjectClass;
+  TmpObj: TGraphicObject;
+begin
+  if (Obj = Self) then
+   Exit;
+  inherited;
+  if Obj is TContainer3D then
+   begin
+     if fObjects = nil then
+      begin
+        fObjects := TGraphicObjList.Create;
+        fObjects.FreeOnClear := True;
+      end
+     else
+      fObjects.Clear;
+     // Alloca un iterator locale
+     TmpIter := TContainer3D(Obj).fObjects.GetIterator;
+     try
+      repeat
+        TmpClass := TGraphicObjectClass(TmpIter.Current.ClassType);
+        TmpObj := TmpClass.Create(TmpIter.Current.ID);
+        TmpObj.Assign(TmpIter.Current);
+        fObjects.Add(TmpObj);
+      until TmpIter.Next = nil;
+     finally
+      TmpIter.Free;
+     end;
+   end;
+end;
+
+procedure TContainer3D.UpdateSourceReferences(const BlockList: TGraphicObjIterator);
+var
+  TmpObj: TObject3D;
+  TmpIter: TGraphicObjIterator;
+begin
+  // Crea un iterator temporaneo.
+  TmpIter := fObjects.GetIterator;
+  try
+    TmpObj := TObject3D(TmpIter.First);
+    while TmpObj <> nil do
+     begin
+       if(TmpObj is TSourceBlock3D) then
+        TSourceBlock3D(TmpObj).UpdateSourceReferences(BlockList)
+       else if(TmpObj is TBlock3D) then
+        TBlock3D(TmpObj).UpdateReference(BlockList);
+       TmpObj := TObject3D(TmpIter.Next);
+     end;
+  finally
+    TmpIter.Free;
+  end;
+  UpdateExtension(Self);
+end;
+
+procedure TContainer3D.Draw(const NormTransf: TTransf3D; const VRP: TPoint3D;
+                            const VT: TTransf2D; const Cnv: TDecorativeCanvas;
+                            const DrawMode: Integer);
+var
+  TmpObj: TObject3D;
+  TmpIter: TGraphicObjIterator;
+  TmpTransf: TTransf3D;
+  TmpPen: TPen;
+  TmpBrush: TBrush;
+begin
+  if (DrawMode and DRAWMODE_ONLYBOUNDINGBOX) = DRAWMODE_ONLYBOUNDINGBOX then
+   begin
+     with Cnv do
+      DrawBoundingBox3D(Cnv, VRP, fBox, NormTransf, VT);
+     Exit;
+   end;
+  // Crea un iterator temporaneo.
+  TmpIter := fObjects.GetIterator;
+  TmpPen := TPen.Create;
+  TmpBrush := TBrush.Create;
+  try
+    if HasTransform then
+     TmpTransf := MultiplyTransform3D(ModelTransform, NormTransf)
+    else
+     TmpTransf := NormTransf;
+    TmpObj := TObject3D(TmpIter.First);
+    with Cnv do
+     begin
+       TmpPen.Assign(Canvas.Pen);
+       TmpBrush.Assign(Canvas.Brush);
+       while TmpObj <> nil do
+        begin
+          Canvas.Pen.Assign(TmpPen);
+          Canvas.Brush.Assign(TmpBrush);
+          TmpObj.Draw(TmpTransf, VRP, VT, Cnv, DrawMode);
+          TmpObj := TObject3D(TmpIter.Next);
+        end;
+     end;
+  finally
+    TmpPen.Free;
+    TmpBrush.Free;
+    TmpIter.Free;
+  end;
+end;
+
+function TContainer3D.OnMe(P: TPoint3D; const NT: TTransf3D; Aperture: TRealType;
+                           var Distance: TRealType): Integer;
+var
+  TmpObj: TObject3D;
+  MinDist: TRealType;
+  TmpIter: TGraphicObjIterator;
+  TmpTransf: TTransf3D;
+begin
+  Result := inherited OnMe(P, NT, Aperture, Distance);
+  if Result = PICK_INBBOX then
+   begin
+     // Crea un iterator temporaneo.
+     TmpIter := fObjects.GetIterator;
+     try
+       if HasTransform then
+        TmpTransf := MultiplyTransform3D(ModelTransform, NT)
+       else
+        TmpTransf := NT;
+       { Check all the objects in the container. }
+       TmpObj := TObject3D(TmpIter.First);
+       MinDist := 2.0 * Aperture;
+       while TmpObj <> nil do
+        begin
+          if (TmpObj.OnMe(P, TmpTransf, Aperture, Distance) >= PICK_INOBJECT) and
+             (Distance < MinDist) then
+           begin
+             MinDist := Distance;
+             Result := TmpObj.ID;
+           end;
+          TmpObj := TObject3D(TmpIter.Next);
+        end;
+       Distance := MinDist;
+     finally
+       TmpIter.Free;
+     end;
+  end;
+end;
+
+procedure TContainer3D.DrawControlPoints(const NormTransf: TTransf3D; const VRP: TPoint3D;
+                                         const VT: TTransf2D; const Cnv: TDecorativeCanvas;
+                                         const Width: Integer);
+begin
+  if fObjects.Count > 0 then
+   inherited;
+end;
+
+// =====================================================================
+// TSourceBlock3D
+// =====================================================================
+
+constructor TSourceBlock3D.Create(ID: LongInt; const Name: TSourceBlockName; const Objs: array of TObject3D);
+begin
+  inherited Create(ID, Objs);
+  FName := Name;
+  FNReference := 0;
+end;
+
+destructor TSourceBlock3D.Destroy;
+begin
+  if fNReference > 0 then
+   Raise ECADSourceBlockIsReferenced.Create('TSourceBlock3D.Destroy: This source block is referenced and cannot be deleted');
+  inherited Destroy;
+end;
+
+constructor TSourceBlock3D.CreateFromStream(const Stream: TStream; const Version: TCADVersion);
+begin
+  inherited;
+  Stream.Read(fToBeSaved, SizeOf(fToBeSaved));
+  Stream.Read(fLibraryBlock, SizeOf(fLibraryBlock));
+  Stream.Read(fName, SizeOf(fName));
+  fNReference := 0;
+end;
+
+procedure TSourceBlock3D.SaveToStream(const Stream: TStream);
+begin
+  inherited SaveToStream(Stream);
+  Stream.Write(fToBeSaved, SizeOf(fToBeSaved));
+  Stream.Write(fLibraryBlock, SizeOf(fLibraryBlock));
+  Stream.Write(FName, SizeOf(FName));
+end;
+
+procedure TSourceBlock3D.Assign(const Obj: TGraphicObject);
+begin
+  if (Obj = Self) then
+   Exit;
+  inherited;
+  if Obj is TSourceBlock3D then
+   fToBeSaved := TSourceBlock3D(Obj).fToBeSaved;
+end;
+
+// =====================================================================
+// TBlock3D
+// =====================================================================
+
+procedure TBlock3D.SetSourceBlock(Source: TSourceBlock3D);
+begin
+  if not Assigned(Source) then
+   Raise Exception.Create('TBlock3D.SetSourceBlock: Invalid parameter');
+  if (FSourceBlock <> Source) then
+   begin
+     if Assigned(FSourceBlock) and (fSourceBlock.fNReference > 0) then
+      Dec(FSourceBlock.FNReference);
+     FSourceBlock := Source;
+     FSourceName := Source.Name;
+     Inc(FSourceBlock.FNReference);
+     UpdateExtension(Self);
+   end;
+end;
+
+procedure TBlock3D.SetOriginPoint(Pt: TPoint3D);
+begin
+  FOriginPoint := Pt;
+  UpdateExtension(Self);
+end;
+
+constructor TBlock3D.Create(ID: LongInt; Source: TSourceBlock3D);
+begin
+  inherited Create(ID);
+
+  if not Assigned(Source) then
+   Raise Exception.Create('TBlock3D.Create: Invalid parameter');
+  FOriginPoint := Point3D(0, 0, 0);
+  FSourceBlock := Source;
+  FSourceName := Source.Name;
+  FBox := Source.Box;
+  Inc(FSourceBlock.FNReference);
+  UpdateExtension(Self);
+end;
+
+destructor TBlock3D.Destroy;
+begin
+  if Assigned(FSourceBlock) and (fSourceBlock.fNReference > 0) then
+   Dec(FSourceBlock.FNReference);
+  inherited Destroy;
+end;
+
+constructor TBlock3D.CreateFromStream(const Stream: TStream; const Version: TCADVersion);
+var
+  TmpPt: TPoint3D;
+  TmpPtS: TPoint3DSingle;
+begin
+  { Load the standard properties }
+  inherited;
+  with Stream do
+   begin
+     { TCADCmp will use the value of FSourceID
+       to find out the reference of the source block. }
+     Read(FSourceName, SizeOf(FSourceName));
+     if( Version >= 'CAD423' ) then
+      begin
+        Read(FOriginPoint, SizeOf(FOriginPoint));
+      end
+     else
+      begin
+        TmpPts.X:=0;TmpPts.Y:=0;TmpPts.Z:=0;TmpPts.W:=0;
+        Read(TmpPtS, SizeOf(TmpPtS));
+        FOriginPoint.X := TmpPtS.X;
+        FOriginPoint.Y := TmpPtS.Y;
+        FOriginPoint.Z := TmpPtS.Z;
+        FOriginPoint.W := TmpPtS.W;
+      end;
+   end;
+  if HasTransform then
+   TmpPt := TransformPoint3D(FOriginPoint, ModelTransform)
+  else
+   TmpPt := FOriginPoint;
+  FBox := BoxOutBox3D(FBox, Rect3D(TmpPt.X, TmpPt.Y, TmpPt.X, TmpPt.Y, TmpPt.Z, TmpPt.Z));
+end;
+
+procedure TBlock3D.SaveToStream(const Stream: TStream);
+begin
+  { Save the standard properties }
+  inherited SaveToStream(Stream);
+  with Stream do
+   begin
+     { Save the ID of the source block. }
+     Write(FSourceName, SizeOf(FSourceName));
+     Write(FOriginPoint, SizeOf(FOriginPoint));
+   end;
+end;
+
+procedure TBlock3D.Assign(const Obj: TGraphicObject);
+begin
+  if (Obj = Self) then
+   Exit;
+  inherited;
+  if Obj is TBlock3D then
+   begin
+     if Assigned(fSourceBlock) and (fSourceBlock.FNReference > 0) then
+      Dec(fSourceBlock.FNReference);
+     fSourceBlock := TBlock3D(Obj).fSourceBlock;
+     fSourceName := fSourceBlock.Name;
+     fOriginPoint := TBlock3D(Obj).OriginPoint;
+     Inc(fSourceBlock.FNReference);
+     UpdateExtension(Self);
+   end;
+end;
+
+procedure TBlock3D.UpdateReference(const BlockList: TGraphicObjIterator);
+var
+  TmpSource: TSourceBlock3D;
+begin
+  TmpSource := BlockList.First as TSourceBlock3D;
+  while TmpSource <> nil do
+   begin
+     if TmpSource.Name = FSourceName then
+      begin
+        FSourceBlock := TmpSource;
+        UpdateExtension(Self);
+        Exit;
+      end;
+     TmpSource := BlockList.Next as TSourceBlock3D;
+   end;
+  Raise ECADListObjNotFound.Create('TBlock3D.UpdateReference: Source block not found');
+end;
+
+procedure TBlock3D._UpdateExtension;
+begin
+  if not Assigned(FSourceBlock) then Exit;
+  if HasTransform then
+   fBox := TransformBoundingBox3D(fSourceBlock.Box, ModelTransform)
+  else
+   fBox := fSourceBlock.Box;
+end;
+
+procedure TBlock3D.DrawControlPoints(const NormTransf: TTransf3D; const VRP: TPoint3D; const VT: TTransf2D;
+                                     const Cnv: TDecorativeCanvas; const Width: Integer);
+var
+  TmpPoint3D: TPoint3D;
+  TmpPoint2D: TPoint2D;
+begin
+  inherited;
+  if HasTransform then
+   TmpPoint3D := TransformPoint3D(fOriginPoint, MultiplyTransform3D(ModelTransform, NormTransf))
+  else
+   TmpPoint3D := TransformPoint3D(fOriginPoint, NormTransf);
+  TmpPoint2D := TransformPoint2D(Point3DToPoint2D(TmpPoint3D), VT);
+  DrawPlaceHolder(Cnv, Round(TmpPoint2D.X), Round(TmpPoint2D.Y), Width);
+end;
+
+procedure TBlock3D.Draw(const NormTransf: TTransf3D; const VRP: TPoint3D; const VT: TTransf2D; const Cnv: TDecorativeCanvas; const DrawMode: Integer);
+begin
+  if not Assigned(FSourceBlock) then
+   Exit;
+  if HasTransform then
+   FSourceBlock.Draw(MultiplyTransform3D(ModelTransform, NormTransf), VRP, VT, Cnv, DrawMode)
+  else
+   FSourceBlock.Draw(NormTransf, VRP, VT, Cnv, DrawMode)
+end;
+
+function TBlock3D.OnMe(P: TPoint3D; const NT: TTransf3D; Aperture: TRealType;
+                       var Distance: TRealType): Integer;
+var
+  TmpPt3D: TPoint3D;
+  TmpTransf: TTransf3D;
+begin
+  Result := PICK_NOOBJECT;
+  if not Assigned(FSourceBlock) then Exit;
+  Result := inherited OnMe(P, NT, Aperture, Distance);
+  if Result = PICK_INBBOX then
+   begin
+     if HasTransform then
+      TmpTransf := MultiplyTransform3D(ModelTransform, NT)
+     else
+      TmpTransf := NT;
+     Result := FSourceBlock.OnMe(P, TmpTransf, Aperture, Distance);
+   end
+  else
+   begin
+     if HasTransform then
+      TmpPt3D := TransformPoint3D(FOriginPoint, ModelTransform)
+     else
+      TmpPt3D := FOriginPoint;
+     if NearPoint3D(TmpPt3D, P, Aperture, Distance, NT) then
+      Result := -1
+   end;
+end;
+
+// =====================================================================
+// TCADCmp3D
+// =====================================================================
+
+procedure TCADCmp3D.SaveObjectsToStream(const Stream: TStream);
+var
+  TmpObj: TObject3D;
+  TmpWord: Word;
+  TmpLong, TmpObjPerc: LongInt;
+  TmpIter: TGraphicObjIterator;
+begin
+  TmpIter := ObjectList.GetPrivilegedIterator;
+  with Stream do
+   try
+     { Save the objects. }
+     TmpLong := ObjectsCount;
+     if TmpLong > 0 then
+      TmpObjPerc := 100 div TmpLong
+     else
+      TmpObjPerc := 0;
+     Write(TmpLong, SizeOf(TmpLong));
+     TmpObj := TmpIter.First as TObject3D;
+     while TmpObj <> nil do
+      begin
+        if Layers[TmpObj.Layer].Streamable and TmpObj.fToBeSaved then
+         begin
+           TmpWord := CADSysFindClassIndex(TmpObj.ClassName);
+           { Save the class index. }
+           Write(TmpWord, SizeOf(TmpWord));
+           TmpObj.SaveToStream(Stream);
+           if Assigned(OnSaveProgress) then
+            OnSaveProgress(Self, 100 - TmpObjPerc * TmpLong);
+           Dec(TmpLong);
+         end;
+        TmpObj := TmpIter.Next as TObject3D;
+      end;
+     { End the list of objects if not all objects were saved. }
+     if TmpLong > 0 then
+      begin
+        TmpWord := 65535;
+        Write(TmpWord, SizeOf(TmpWord));
+      end;
+   finally
+     TmpIter.Free;
+   end;
+end;
+
+{$WARNINGS OFF}
+procedure TCADCmp3D.LoadObjectsFromStream(const Stream: TStream; const Version: TCADVersion);
+var
+  TmpClass: TGraphicObjectClass;
+  TmpObj: TGraphicObject;
+  TmpLong, TmpObjPerc: LongInt;
+  TmpWord: Word;
+  TmpBlocksIter: TExclusiveGraphicObjIterator;
+begin
+  TmpBlocksIter := SourceBlocksExclusiveIterator;
+  with Stream do
+   try
+     TmpLong := 0;
+     Read(TmpLong, SizeOf(TmpLong));
+     if TmpLong > 0 then
+      TmpObjPerc := 100 div TmpLong
+     else
+      TmpObjPerc := 0;
+     while TmpLong > 0 do
+      begin
+        { Read the type of object and the length of the record. }
+        TmpWord := 0;
+        Read(TmpWord, SizeOf(TmpWord));
+        if TmpWord = 65535 then
+         { End prematurely. }
+         Break;
+        Dec(TmpLong);
+        { Retrive the class type from the registered classes. }
+        try
+         TmpClass := CADSysFindClassByIndex(TmpWord);
+        except
+         on ECADObjClassNotFound do
+          begin
+            ShowMessage('Object class not found. Object not load');
+            Break;
+          end;
+        end;
+        TmpObj := TmpClass.CreateFromStream(Stream, Version);
+        if Assigned(OnLoadProgress) then
+         OnLoadProgress(Self, TmpObjPerc);
+        if TmpObj is TContainer3D then
+         try
+           TContainer3D(TmpObj).UpdateSourceReferences(TmpBlocksIter);
+         except
+          on ECADListObjNotFound do
+           begin
+             ShowMessage('Source block not found. The block will not be loaded');
+             TmpObj.Free;
+             Continue;
+           end;
+         end
+        else if TmpObj is TBlock3D then
+         try
+           TBlock3D(TmpObj).UpdateReference(TmpBlocksIter);
+         except
+          on ECADListObjNotFound do
+           begin
+             ShowMessage('Source block not found. The block will not be loaded');
+             TmpObj.Free;
+             Continue;
+           end;
+         end;
+        CurrentLayer := TmpObj.Layer;
+        inherited AddObject(-1, TGraphicObject(TmpObj));
+     end;
+   finally
+     TmpBlocksIter.Free;
+   end;
+end;
+{$WARNINGS ON}
+
+procedure TCADCmp3D.SaveBlocksToStream(const Stream: TStream; const AsLibrary: Boolean);
+var
+  TmpObj: TSourceBlock3D;
+  TmpWord: Word;
+  TmpLong, TmpPos: LongInt;
+  TmpIter: TGraphicObjIterator;
+begin
+  TmpIter := BlockList.GetPrivilegedIterator;
+  with Stream do
+   try
+     TmpLong := SourceBlocksCount;
+     TmpPos := Stream.Position;
+     Write(TmpLong, SizeOf(TmpLong));
+     TmpObj := TmpIter.First as TSourceBlock3D;
+     TmpLong := 0;
+     while TmpObj <> nil do
+      begin
+        if TmpObj.ToBeSaved and
+           not(TmpObj.IsLibraryBlock xor AsLibrary) then
+         begin
+           TmpWord := CADSysFindClassIndex(TmpObj.ClassName);
+           { Save the class index. }
+           Write(TmpWord, SizeOf(TmpWord));
+           TmpObj.SaveToStream(Stream);
+           Inc(TmpLong);
+         end;
+        TmpObj := TmpIter.Next as TSourceBlock3D;
+      end;
+     Seek(TmpPos, soFromBeginning);
+     Write(TmpLong, SizeOf(TmpLong));
+     Seek(0, soFromEnd);
+   finally
+     TmpIter.Free;
+   end;
+end;
+
+{$WARNINGS OFF}
+procedure TCADCmp3D.LoadBlocksFromStream(const Stream: TStream; const Version: TCADVersion);
+var
+  TmpClass: TGraphicObjectClass;
+  TmpObj: TGraphicObject;
+  TmpLong: LongInt;
+  TmpWord: Word;
+  TmpBlocksIter: TGraphicObjIterator;
+begin
+  with Stream do
+   begin
+     { Load the source blocks. }
+     TmpLong := 0;
+     Read(TmpLong, SizeOf(TmpLong));
+     while TmpLong > 0 do
+      begin
+        { Read the type of object and the length of the record. }
+        TmpWord := 0;
+        Read(TmpWord, SizeOf(TmpWord));
+        Dec(TmpLong);
+        { Retrive the class type from the registered classes. }
+        try
+         TmpClass := CADSysFindClassByIndex(TmpWord);
+        except
+         on ECADObjClassNotFound do
+          begin
+            ShowMessage('Object class not found. Object not load');
+            Continue;
+          end;
+        end;
+        TmpObj := TmpClass.CreateFromStream(Stream, Version);
+        TmpBlocksIter := SourceBlocksIterator;
+        try
+         TSourceBlock3D(TmpObj).UpdateSourceReferences(TmpBlocksIter);
+        except
+         on ECADListObjNotFound do
+          begin
+            ShowMessage('Source block not found. The block will not be loaded');
+            TmpObj.Free;
+            TmpBlocksIter.Free;
+            Continue;
+          end;
+        end;
+        TmpBlocksIter.Free;
+        AddSourceBlock(TSourceBlock3D(TmpObj));
+      end;
+   end;
+end;
+{$WARNINGS ON}
+
+function TCADCmp3D.AddSourceBlock(Obj: TSourceBlock3D): TSourceBlock3D;
+begin
+  Result := Obj;
+  inherited AddSourceBlock(-1, Obj);
+end;
+
+procedure TCADCmp3D.DeleteSourceBlock(const SrcName: TSourceBlockName);
+var
+  TmpSource: TSourceBlock3D;
+begin
+  TmpSource := TSourceBlock3D(FindSourceBlock(SrcName));
+  if TmpSource.NumberOfReferences > 0 then
+   Raise ECADSysException.Create('TCADCmp3D.DeleteSourceBlock: Remove the references before the source');
+  DeleteSourceBlockByID(TmpSource.ID);
+end;
+
+function TCADCmp3D.GetSourceBlock(ID: LongInt): TSourceBlock3D;
+begin
+  Result := inherited GetSourceBlock(ID) as TSourceBlock3D;
+end;
+
+function TCADCmp3D.FindSourceBlock(const SrcName: TSourceBlockName): TSourceBlock3D;
+var
+  TmpIter: TGraphicObjIterator;
+begin
+  TmpIter := SourceBlocksIterator;
+  try
+    Result := TmpIter.First as TSourceBlock3D;
+    while Result <> nil do
+     begin
+       if SrcName = Result.Name then
+        Exit;
+       Result := TmpIter.Next as TSourceBlock3D;
+     end;
+  finally
+    TmpIter.Free;
+  end;
+  Raise ECADListObjNotFound.Create('TCADCmp3D.FindSourceBlock: Source block not found');
+end;
+
+function TCADCmp3D.BlockObjects(const SrcName: TSourceBlockName; const Objs: TGraphicObjIterator): TSourceBlock3D;
+var
+  TmpObj: TObject3D;
+begin
+  Result := TSourceBlock3D.Create(0, SrcName, [nil]);
+  try
+    TmpObj := Objs.First as TObject3D;
+    while TmpObj <> nil do
+     begin
+       Result.Objects.Add(TmpObj);
+       TmpObj := Objs.Next as TObject3D;
+     end;
+    AddSourceBlock(Result);
+  except
+    Result.Free;
+    Result := nil;
+  end;
+end;
+
+procedure TCADCmp3D.DeleteSavedSourceBlocks;
+var
+  TmpObj: TGraphicObject;
+  TmpIter: TExclusiveGraphicObjIterator;
+begin
+  TmpIter := SourceBlocksExclusiveIterator;
+  try
+    TmpObj := TmpIter.First;
+    while Assigned(TmpObj) do
+     if TSourceBlock3D(TmpObj).ToBeSaved and not TSourceBlock3D(TmpObj).IsLibraryBlock then
+      try
+        TmpIter.DeleteCurrent;
+        TmpObj := TmpIter.Current;
+      except
+        TmpObj := TmpIter.Next;
+      end
+     else
+      TmpObj := TmpIter.Next;
+  finally
+    TmpIter.Free;
+  end;
+end;
+
+procedure TCADCmp3D.DeleteLibrarySourceBlocks;
+var
+  TmpObj: TGraphicObject;
+  TmpIter: TExclusiveGraphicObjIterator;
+begin
+  TmpIter := SourceBlocksExclusiveIterator;
+  try
+    TmpObj := TmpIter.First;
+    while Assigned(TmpObj) do
+     if TSourceBlock3D(TmpObj).IsLibraryBlock then
+      try
+        TmpIter.DeleteCurrent;
+        TmpObj := TmpIter.Current;
+      except
+        TmpObj := TmpIter.Next;
+      end
+     else
+      TmpObj := TmpIter.Next;
+  finally
+    TmpIter.Free;
+  end;
+end;
+
+function TCADCmp3D.AddObject(ID: LongInt; const Obj: TObject3D): TObject3D;
+begin
+  Result := Obj;
+  inherited AddObject(ID, TGraphicObject(Obj));
+end;
+
+function TCADCmp3D.InsertObject(ID, IDInsertPoint: LongInt; Obj: TObject3D): TObject3D;
+begin
+  Result := Obj;
+  inherited InsertObject(ID, IDInsertPoint, TGraphicObject(Obj));
+end;
+
+function TCADCmp3D.AddBlock(ID: LongInt; const SrcName: TSourceBlockName): TObject3D;
+var
+  Tmp: TBlock3D;
+  TmpSource: TSourceBlock3D;
+begin
+  TmpSource := FindSourceBlock(SrcName);
+  Tmp := TBlock3D.Create(ID, TmpSource);
+  try
+    AddObject(ID, Tmp);
+    Result := Tmp;
+  except
+    Tmp.Free;
+    Result := nil;
+  end;
+end;
+
+function TCADCmp3D.GetObject(ID: LongInt): TObject3D;
+begin
+  Result := inherited GetObject(ID) as TObject3D;
+end;
+
+procedure TCADCmp3D.TransformObjects(ListOfObj: array of LongInt; T: TTransf3D);
+var
+  Cont: LongInt;
+  Tmp: TObject3D;
+  TmpIter: TExclusiveGraphicObjIterator;
+begin
+  TmpIter := ObjectsExclusiveIterator;
+  try
+    if ListOfObj[Low(ListOfObj)] < 0 then
+     begin
+       { Apply trasform to all objects. }
+       Tmp := TmpIter.First as TObject3D;
+       while Tmp <> nil do
+        begin
+          Tmp.Transform(T);
+          Tmp.ApplyTransform;
+          Tmp := TmpIter.Next as TObject3D;
+        end;
+     end
+    else
+     for Cont := Low(ListOfObj) to High(ListOfObj) do
+      begin
+        try
+         Tmp := TObject3D(TmpIter.Search(ListOfObj[Cont]));
+        except
+         on Exception do Raise ECADListObjNotFound.Create('TCADCmp3D.TransformObjects: Object not found');
+        end;
+        if Tmp <> nil then
+         begin
+           Tmp.Transform(T);
+           Tmp.ApplyTransform;
+         end;
+      end;
+  finally
+    TmpIter.Free;
+  end;
+  if RepaintAfterTransform then RepaintViewports;
+end;
+
+procedure TCADCmp3D.RedrawObject(Obj: TObject3D);
+begin
+  inherited RedrawObject(Obj);
+end;
+
+function TCADCmp3D.GetExtension: TRect3D;
+var
+  Tmp: TObject3D;
+  TmpIter: TGraphicObjIterator;
+begin
+  if (ObjectsCount = 0) or (IsBlocked) then
+   Exit;
+  TmpIter := ObjectsIterator;
+  try
+    Tmp := TmpIter.First as TObject3D;
+    Result := Rect3D(MaxCoord, MaxCoord, MaxCoord, MinCoord, MinCoord, MinCoord);
+    while Tmp <> nil do
+     begin
+       if fLayers[Tmp.Layer].fVisible then
+        begin
+          try
+           Tmp.UpdateExtension(Self);
+          finally
+          end;
+          { Set the new extension if necessary. }
+          if Tmp.Box.FirstEdge.X < Result.FirstEdge.X then
+           Result.FirstEdge.X := Tmp.Box.FirstEdge.X;
+          if Tmp.Box.SecondEdge.X > Result.SecondEdge.X then
+           Result.SecondEdge.X := Tmp.Box.SecondEdge.X;
+          if Tmp.Box.FirstEdge.Y < Result.FirstEdge.Y then
+           Result.FirstEdge.Y := Tmp.Box.FirstEdge.Y;
+          if Tmp.Box.SecondEdge.Y > Result.SecondEdge.Y then
+           Result.SecondEdge.Y := Tmp.Box.SecondEdge.Y;
+          if Tmp.Box.FirstEdge.Z < Result.FirstEdge.Z then
+           Result.FirstEdge.Z := Tmp.Box.FirstEdge.Z;
+          if Tmp.Box.SecondEdge.Z > Result.SecondEdge.Z then
+           Result.SecondEdge.Z := Tmp.Box.SecondEdge.Z;
+        end;
+       Tmp := TmpIter.Next as TObject3D;
+     end;
+  finally
+    TmpIter.Free;
+  end;
+end;
+
+// =====================================================================
+// TCADViewport3D
+// =====================================================================
+
+procedure TCADViewport3D.SetCADCmp(Cad: TCADCmp);
+begin
+  if (CAD <> fCADCmp3D) then
+   begin
+     inherited SeTCADCmp(Cad);
+     fCADCmp3D := Cad as TCADCmp3D;
+   end;
+end;
+
+procedure TCADViewport3D.CopyBackBufferRectOnCanvas(const Rect: TRect; const GenEvent: Boolean);
+begin
+  inherited;
+  if fAxis.Visible and HandleAllocated then
+   fAxis.PaintAxes(Point(ClientRect.Left, ClientRect.Bottom), Canvas);
+end;
+
+procedure TCADViewport3D.SetCADCmp3D(Cad: TCADCmp3D);
+begin
+  SetCADCmp(Cad);
+end;
+
+// Trasforma da WRC a VRC. Aggiorna fViewOrientation.
+function TCADViewport3D.BuildViewOrientationTransform(const LVRP: TPoint3D; const LVUP, LVPN: TVector3D): TTransf3D;
+begin
+  Result := ViewOrientationTransform3D(LVRP, LVPN, LVUP);
+end;
+
+procedure TCADViewport3D.UpdateViewportOrientation;
+var
+  OldHand: TNotifyEvent;
+begin
+  StopRepaint;
+  try
+    fViewOrientation := BuildViewOrientationTransform(fVRP, fVUP, fVPN);
+    if Assigned(fOnViewProjectionChanged) then
+     fOnViewProjectionChanged(Self);
+  except
+  end;
+  OldHand := OnViewMappingChanged;
+  try
+    // in questo caso non sto effettivamente cambiando il mapping.
+    OnViewMappingChanged := nil;
+    UpdateViewportTransform;
+  finally
+    OnViewMappingChanged := OldHand;
+  end;
+  if HandleAllocated then
+   Repaint;
+end;
+
+procedure TCADViewport3D.SetVPN(V: TVector3D);
+begin
+  if not IsSameVector3D(V, fVPN) then
+   begin
+     fVPN := NormalizeVector3D(V);
+     UpdateViewportOrientation;
+   end;
+end;
+
+procedure TCADViewport3D.SetVRP(P: TPoint3D);
+begin
+  if not IsSamePoint3D(P, fVRP) then
+   begin
+     fVRP := P;
+     UpdateViewportOrientation;
+   end;
+end;
+
+procedure TCADViewport3D.SetVUP(V: TVector3D);
+begin
+  if not IsSameVector3D(V, fVUP) then
+   begin
+     fVUP := NormalizeVector3D(V);
+     UpdateViewportOrientation;
+   end;
+end;
+
+procedure TCADViewport3D.SetFClip(F: TRealType);
+begin
+  if F <> fFrontPlane then
+   begin
+     fFrontPlane := F;
+     if fFrontPlane < fBackPlane then
+      fBackPlane := F;
+     UpdateViewportTransform;
+   end;
+end;
+
+procedure TCADViewport3D.SetBClip(B: TRealType);
+begin
+  if B <> fBackPlane then
+   begin
+     fBackPlane := B;
+     if fFrontPlane < fBackPlane then
+      fFrontPlane := B;
+     UpdateViewportTransform;
+   end;
+end;
+
+function TCADViewport3D.GetPRPlanePosition: TPoint3D;
+begin
+  Result := fVRP;
+end;
+
+function TCADViewport3D.GetViewPoint: TPoint3D;
+begin
+  Result := ExtrudePoint3D(fVRP, fVPN, -fPRPlaneViewPointDistance);
+end;
+
+function TCADViewport3D.GetCameraUP: TVector3D;
+begin
+  Result := fVUP;
+end;
+
+constructor TCADViewport3D.Create(AOwner: TComponent);
+begin
+  inherited Create(AOwner);
+
+  fPickFilter := TObject3D;
+  fAxis := TCAD3DAxis.Create(Self);
+
+  fVRP := Point3D(0, 0, 0);
+  fVPN := Versor3D(0, -1, 0);
+  fVUP := Versor3D(0, 0, 1);
+  fBackPlane := -0.99;
+  fFrontPlane := 10000;
+end;
+
+destructor TCADViewport3D.Destroy;
+begin
+  fAxis.Free;
+
+  inherited;
+end;
+
+function TCADViewport3D.BuildViewportTransform(var ViewWin: TRect2D;
+                                               const ScreenWin: TRect;
+                                               const AspectRatio: TRealType): TTransf2D;
+var
+  TmpS: TRect2D;
+begin
+  // Crea la trasformazione da ViewPlane a Schermo. Viene usata per zoom e interazioni con l'utente.
+  Result := GetVisualTransform2D(ViewWin, ScreenWin, AspectRatio);
+  // Crea la trasformazione di normalizzazione. Usata per disegnare.
+  if fBackPlane <> fFrontPlane then
+   fViewNormalization := MultiplyTransform3D(fViewOrientation, BuildViewNormalizationTransform(ViewWin, fFrontPlane, fBackPlane));
+  // Aggiunge la mappatura da NRC a Schermo.
+  TmpS := Rect2D(-1.0, -1.0, 1.0, 1.0);
+  fViewMapping := GetVisualTransform2D(TmpS, ScreenWin, 0.0);
+end;
+
+procedure TCADViewport3D.DrawObject(const Obj: TGraphicObject; const Cnv: TDecorativeCanvas; const ClipRect2D: TRect2D);
+begin
+  if not TObject3D(Obj).IsVisible(fViewNormalization, fVRP, DrawMode) then
+   Exit;
+  with Obj as TObject3D do
+   try
+     if (CADCmp.Layers.SetCanvas(Cnv, Layer)) then
+      begin
+        Draw(fViewNormalization, fVRP, fViewMapping, Cnv, DrawMode);
+        if ShowControlPoints then
+         begin
+           Cnv.Canvas.Pen.Color := RubberPenColor;
+           Cnv.Canvas.Pen.Width := 1;
+           Cnv.Canvas.Brush.Color := ControlPointsColor;
+           DrawControlPoints(fViewNormalization, fVRP, fViewMapping, Cnv, ControlPointsWidth);
+         end;
+      end;
+   finally
+   end;
+end;
+
+procedure TCADViewport3D.DrawObjectWithRubber(const Obj: TGraphicObject; const Cnv: TDecorativeCanvas; const ClipRect2D: TRect2D);
+begin
+  if not TObject3D(Obj).IsVisible(fViewNormalization, fVRP, DrawMode) then
+   Exit;
+  with (Obj as TObject3D) do
+   try
+     Cnv.Canvas.Pen.Assign(RubberPen);
+     Cnv.Canvas.Brush.Color := RubberPen.Color;
+     Cnv.Canvas.Brush.Style := bsSolid;
+     Draw(fViewNormalization, fVRP, fViewMapping, Cnv, DrawMode);
+     if ShowControlPoints then
+      begin
+        Cnv.Canvas.Pen.Assign(RubberPen);
+        Cnv.Canvas.Brush.Color := ControlPointsColor;
+        DrawControlPoints(fViewNormalization, fVRP, fViewMapping, Cnv, ControlPointsWidth);
+      end;
+   finally
+   end;
+end;
+
+procedure TCADViewport3D._DrawObject2D(const Obj: TGraphicObject; const Cnv: TDecorativeCanvas);
+var
+  TmpClipRect: TRect2D;
+begin
+  if not TObject2D(Obj).IsVisible(VisualRect, DrawMode) then
+   Exit;
+  TmpClipRect := RectToRect2D(ClientRect);
+  with Obj as TObject2D do
+   try
+     if (CADCmp.Layers.SetCanvas(Cnv, Layer)) then
+      begin
+        Draw(ViewportToScreenTransform, Cnv, TmpClipRect, DrawMode);
+        if ShowControlPoints then
+         begin
+           Cnv.Canvas.Pen.Color := RubberPenColor;
+           Cnv.Canvas.Pen.Width := 1;
+           Cnv.Canvas.Brush.Color := ControlPointsColor;
+           DrawControlPoints(ViewportToScreenTransform, Cnv, TmpClipRect, ControlPointsWidth);
+         end;
+      end;
+   finally
+   end;
+end;
+
+procedure TCADViewport3D._DrawObjectWithRubber2D(const Obj: TGraphicObject; const Cnv: TDecorativeCanvas);
+var
+  TmpClipRect: TRect2D;
+begin
+  if not TObject2D(Obj).IsVisible(VisualRect, DrawMode) then
+   Exit;
+  with Obj as TObject2D, Cnv do
+   try
+     TmpClipRect := RectToRect2D(ClientRect);
+     Canvas.Pen.Assign(RubberPen);
+     Canvas.Brush.Color := RubberPen.Color;
+     Canvas.Brush.Style := bsSolid;
+     Draw(ViewportToScreenTransform, Cnv, TmpClipRect, DrawMode);
+     if ShowControlPoints then
+      begin
+        Cnv.Canvas.Pen.Assign(RubberPen);
+        Cnv.Canvas.Pen.Width := 1;
+        Cnv.Canvas.Brush.Color := ControlPointsColor;
+        DrawControlPoints(ViewportToScreenTransform, Cnv, TmpClipRect, ControlPointsWidth);
+      end;
+   finally
+   end;
+end;
+
+procedure TCADViewport3D.DrawObject2D(const Obj: TObject2D; const CtrlPts: Boolean);
+var
+  TmpFlag: Boolean;
+begin
+  if not Assigned(fCADCmp3D) then Exit;
+  TmpFlag := ShowControlPoints;
+  ShowControlPoints := ShowControlPoints or CtrlPts;
+  try
+    DrawObject(Obj, OffScreenCanvas, RectToRect2D(ClientRect));
+    _DrawObject2D(Obj, OnScreenCanvas);
+  finally
+    ShowControlPoints := TmpFlag;
+  end;
+end;
+
+procedure TCADViewport3D.DrawObject2DWithRubber(const Obj: TObject2D; const CtrlPts: Boolean);
+var
+  TmpFlag: Boolean;
+begin
+  if not Assigned(fCADCmp3D) then Exit;
+  TmpFlag := ShowControlPoints;
+  ShowControlPoints := ShowControlPoints or CtrlPts;
+  try
+    _DrawObjectWithRubber2D(Obj, OnScreenCanvas);
+  finally
+    ShowControlPoints := TmpFlag;
+  end;
+end;
+
+procedure TCADViewport3D.DrawObject3D(const Obj: TObject3D; const CtrlPts: Boolean);
+var
+  TmpFlag: Boolean;
+begin
+  if not Assigned(fCADCmp3D) then Exit;
+  TmpFlag := ShowControlPoints;
+  ShowControlPoints := ShowControlPoints or CtrlPts;
+  try
+    DrawObject(Obj, OffScreenCanvas, RectToRect2D(ClientRect));
+    DrawObject(Obj, OnScreenCanvas, RectToRect2D(ClientRect));
+  finally
+    ShowControlPoints := TmpFlag;
+  end;
+end;
+
+procedure TCADViewport3D.DrawObject3DWithRubber(const Obj: TObject3D; const CtrlPts: Boolean);
+var
+  TmpFlag: Boolean;
+begin
+  if not Assigned(fCADCmp3D) then Exit;
+  TmpFlag := ShowControlPoints;
+  ShowControlPoints := ShowControlPoints or CtrlPts;
+  try
+    DrawObjectWithRubber(Obj, OnScreenCanvas, RectToRect2D(ClientRect));
+  finally
+    ShowControlPoints := TmpFlag;
+  end;
+end;
+
+procedure TCADViewport3D.CopyRectToCanvas(CADRect: TRect2D;
+                                          const CanvasRect: TRect;
+                                          const Cnv: TCanvas;
+                                          const Mode: TCanvasCopyMode);
+var
+  Tmp: TObject3D;
+  TmpTransform: TTransf2D;
+  TmpWin: TRect2D;
+  TmpFlag: Boolean;
+  TmpIter: TGraphicObjIterator;
+  TmpCanvas: TDecorativeCanvas;
+begin
+  if not Assigned(fCADCmp3D) or fCADCmp3D.IsBlocked then
+   Exit;
+  TmpCanvas := TDecorativeCanvas.Create(Cnv);
+  if (ViewportObjects <> nil) then
+   TmpIter := ViewportObjects.GetIterator
+  else
+   TmpIter := fCADCmp3D.ObjectsIterator;
+  TmpWin := Rect2D(-1, -1, 1, 1);
+  try
+    case Mode of
+     cmNone: TmpTransform := GetVisualTransform2D(TmpWin, CanvasRect, 0);
+     cmAspect: TmpTransform := GetVisualTransform2D(TmpWin, CanvasRect, AspectRatio);
+    else
+     TmpTransform := fViewMapping;
+    end;
+    Tmp := TObject3D(TmpIter.First);
+    TmpFlag := ShowControlPoints;
+    ShowControlPoints := False;
+    while Tmp <> nil do
+     begin
+       if Tmp.IsVisible(fViewNormalization, fVRP, DrawMode) then
+        begin
+          fCADCmp3D.Layers.SetCanvas(TmpCanvas, Tmp.Layer);
+          if Cnv.Pen.Color = clWhite then
+           Cnv.Pen.Color := clBlack;
+          if Cnv.Brush.Color = clWhite then
+           Cnv.Brush.Color := clBlack;
+          Tmp.Draw(fViewNormalization, fVRP, TmpTransform, TmpCanvas, DrawMode);
+        end;
+       Tmp := TObject3D(TmpIter.Next);
+     end;
+    ShowControlPoints := TmpFlag;
+  finally
+    TmpIter.Free;
+    TmpCanvas.Free;
+  end;
+end;
+
+procedure TCADViewport3D.SetCamera(const ProjectionPlaneP, ViewP: TPoint3D; const Up: TVector3D);
+begin
+  StopRepaint;
+  fVUP := Up;
+  fVRP := ProjectionPlaneP;
+  fVPN := Direction3D(ViewP, ProjectionPlaneP);
+  fPRPlaneViewPointDistance := PointDistance3D(ProjectionPlaneP, ViewP);
+  UpdateViewportOrientation;
+end;
+
+procedure TCADViewport3D.ZoomToBox(const Box: TRect3D);
+var
+  ExtWin: TRect2D;
+  ExtBox: TRect3D;
+  Marg: TRealType;
+  TmpBool: Boolean;
+begin
+  if not Assigned(fCADCmp3D) then
+   Exit;
+  StopRepaint;
+  // Project box on NRC plane with a margin.
+  ExtBox := Box;
+  Marg := Abs(ExtBox.SecondEdge.X - ExtBox.FirstEdge.X) / 2.0;
+  Marg := {%H-}MaxValue([Marg, Abs(ExtBox.SecondEdge.Y - ExtBox.FirstEdge.Y) / 2.0]);
+  Marg := {%H-}MaxValue([Marg, Abs(ExtBox.SecondEdge.Z - ExtBox.FirstEdge.Z) / 2.0]);
+  if Marg = 0.0 then
+   Marg := 1.0;
+  ExtBox.FirstEdge.X := ExtBox.FirstEdge.X - Marg;
+  ExtBox.FirstEdge.Y := ExtBox.FirstEdge.Y - Marg;
+  ExtBox.FirstEdge.Z := ExtBox.FirstEdge.Z - Marg;
+  ExtBox.SecondEdge.X := ExtBox.SecondEdge.X + Marg;
+  ExtBox.SecondEdge.Y := ExtBox.SecondEdge.Y + Marg;
+  ExtBox.SecondEdge.Z := ExtBox.SecondEdge.Z + Marg;
+  // Change the viewpoint to view all.
+  TmpBool := InUpdating;
+  BeginUpdate;
+  try
+    SetCamera(ExtBox.SecondEdge,
+              ExtBox.FirstEdge, VUP);
+    // Extract the view window.
+    ExtWin := GetBox2DExtension3D(ExtBox, fViewNormalization);
+    // Project the Extesion win on Screen.
+    ExtWin := TransformBoundingBox2D(ExtWin, fViewMapping);
+    // Retrieve the Extension win on the viewport.
+    ExtWin := TransformBoundingBox2D(ExtWin, ScreenToViewportTransform);
+    // Zoom to extension.
+    ZoomWindow(ExtWin);
+  finally
+    if not TmpBool then
+     EndUpdate;
+    Repaint;
+  end;
+end;
+
+procedure TCADViewport3D.ZoomToExtension;
+var
+  ExtWin: TRect2D;
+  ExtBox: TRect3D;
+  Marg: TRealType;
+  TmpBool: Boolean;
+begin
+  if not Assigned(fCADCmp3D) then
+   Exit;
+  StopRepaint;
+  if CADCmp3D.ObjectsCount = 0 then
+   begin
+     Repaint;
+     Exit;
+   end;
+  // Project Extension box on NRC plane with a margin.
+  // Project box on NRC plane with a margin.
+  ExtBox := fCADCmp3D.DrawingExtension;
+  Marg := Abs(ExtBox.SecondEdge.X - ExtBox.FirstEdge.X) / 20.0;
+  Marg := {%H-}MaxValue([Marg, Abs(ExtBox.SecondEdge.Y - ExtBox.FirstEdge.Y) / 20.0]);
+  Marg := {%H-}MaxValue([Marg, Abs(ExtBox.SecondEdge.Z - ExtBox.FirstEdge.Z) / 20.0]);
+  if Marg = 0.0 then
+   Marg := 1.0;
+  ExtBox.FirstEdge.X := ExtBox.FirstEdge.X - Marg;
+  ExtBox.FirstEdge.Y := ExtBox.FirstEdge.Y - Marg;
+  ExtBox.FirstEdge.Z := ExtBox.FirstEdge.Z - Marg;
+  ExtBox.SecondEdge.X := ExtBox.SecondEdge.X + Marg;
+  ExtBox.SecondEdge.Y := ExtBox.SecondEdge.Y + Marg;
+  ExtBox.SecondEdge.Z := ExtBox.SecondEdge.Z + Marg;
+  TmpBool := InUpdating;
+  BeginUpdate;
+  try
+    // Extract the view window.
+    ExtWin := GetBox2DExtension3D(ExtBox, fViewNormalization);
+    // Project the Extesion win on Screen.
+    ExtWin := TransformBoundingBox2D(ExtWin, fViewMapping);
+    // Retrieve the Extension win on the viewport.
+    ExtWin := TransformBoundingBox2D(ExtWin, ScreenToViewportTransform);
+    // Zoom to extension.
+    ZoomWindow(ExtWin);
+  finally
+    if not TmpBool then
+     EndUpdate;
+  end;
+end;
+
+procedure TCADViewport3D.GroupObjects(const ResultLst: TGraphicObjList;
+                                      Frm: TRect2D;
+                                      const Mode: TGroupMode;
+                                      const RemoveFromCAD: Boolean);
+var
+  Tmp: TObject3D;
+  TmpBox: TRect2D;
+  TmpObjectsIter: TExclusiveGraphicObjIterator;
+begin
+  if not Assigned(CADCmp) or CADCmp.HasIterators then
+   Exit;
+  StopRepaint;
+  // Lo porta da VisualRect a schermo.
+  Frm := TransformRect2D(Frm, ViewportToScreenTransform);
+  // E poi a normalizzate.
+  Frm := ReorderRect2D(TransformRect2D(Frm, InvertTransform2D(fViewMapping)));
+  ResultLst.FreeOnClear := RemoveFromCAD;
+  TmpObjectsIter := fCADCmp3D.ObjectsExclusiveIterator;
+  try
+    Tmp := TmpObjectsIter.First as TObject3D;
+    while Tmp <> nil do
+     with (CADCmp.Layers[Tmp.Layer]) do
+      begin
+        if Active and Visible and (Tmp.Enabled) and (Tmp is FPickFilter) and Tmp.IsVisible(fViewNormalization, fVRP, DrawMode) then
+         begin
+           TmpBox := GetBox2DExtension3D(Tmp.Box, fViewNormalization);
+           if (Mode = gmAllInside) and IsBoxAllInBox2D(TmpBox, Frm) then
+            { The object is in the frame. }
+            begin
+              ResultLst.Add(Tmp);
+              if RemoveFromCAD then
+               begin
+                 TmpObjectsIter.RemoveCurrent;
+                 Tmp := TObject3D(TmpObjectsIter.Current);
+                 Continue;
+               end;
+            end
+           else if (Mode = gmCrossFrame) and IsBoxInBox2D(TmpBox, Frm) then
+             { The object cross the frame. }
+            begin
+              ResultLst.Add(Tmp);
+              if RemoveFromCAD then
+               begin
+                 TmpObjectsIter.RemoveCurrent;
+                 Tmp := TObject3D(TmpObjectsIter.Current);
+                 Continue;
+               end;
+            end;
+          end;
+        Tmp := TmpObjectsIter.Next as TObject3D;
+      end;
+  finally
+    TmpObjectsIter.Free;
+  end;
+end;
+
+function TCADViewport3D.GetPixelAperture: TPoint2D;
+begin
+  Result.X := 1 / fViewMapping[1, 1];
+  Result.Y := 1 / fViewMapping[2, 2];
+  Result.W := 1.0;
+end;
+
+function TCADViewport3D.PickObject(Pt: TPoint3D; Aperture: Word; FirstFound: Boolean; var NPoint: Integer): TObject3D;
+var
+  TmpNPoint: Integer;
+  Tmp: TObject3D;
+  WAperture, MinDist, Distance: TRealType;
+  TmpIter: TGraphicObjIterator;
+begin
+  Result := nil;
+  if (not Assigned(CADCmp)) and (not Assigned(ViewportObjects)) then
+   Exit;
+  if CADCmp.HasIterators then
+   Exit;
+  if (ViewportObjects <> nil) then
+   TmpIter := ViewportObjects.GetIterator
+  else
+   TmpIter := fCADCmp3D.ObjectsIterator;
+  StopRepaint;
+  try
+    { Normalizing Pt. }
+    Pt := TransformPoint3D(Pt, fViewNormalization);
+    { Normalizing Aperture. }
+    WAperture := GetPixelAperture.X * Aperture;
+    MinDist := WAperture;
+    NPoint := PICK_NOOBJECT;
+    Tmp := TmpIter.First as TObject3D;
+    while Tmp <> nil do
+     with (CADCmp.Layers[Tmp.Layer]) do
+      begin
+        if Active and Visible and (Tmp is FPickFilter) and Tmp.IsVisible(fViewNormalization, fVRP, DrawMode) then
+         begin
+           Distance := 0;
+           TmpNPoint := Tmp.OnMe(Pt, fViewNormalization, WAperture, Distance);
+           if (TmpNPoint >= NPoint) and (Distance <= MinDist) then
+            begin
+              Result := Tmp;
+              NPoint := TmpNPoint;
+              MinDist := Distance;
+              if FirstFound then
+               Break;
+            end;
+         end;
+        Tmp := TmpIter.Next as TObject3D;
+      end;
+  finally
+    TmpIter.Free;
+  end;
+end;
+
+function TCADViewport3D.PickListOfObjects(const PickedObjects: TList; Pt: TPoint3D; Aperture: Word): Integer;
+var
+  Tmp: TObject3D;
+  WAperture, Distance: TRealType;
+  TmpIter: TExclusiveGraphicObjIterator;
+begin
+  Result := 0;
+  if (not Assigned(CADCmp)) and (not Assigned(ViewportObjects)) then
+   Exit;
+  if CADCmp.HasIterators then
+   Exit;
+  if (ViewportObjects <> nil) then
+   TmpIter := ViewportObjects.GetExclusiveIterator
+  else
+   TmpIter := fCADCmp3D.ObjectsExclusiveIterator;
+  StopRepaint;
+  try
+    { Normalizing Pt. }
+    Pt := TransformPoint3D(Pt, fViewNormalization);
+    { Normalizing Aperture. }
+    WAperture := GetPixelAperture.X * Aperture;
+    Tmp := TmpIter.First as TObject3D;
+    while Tmp <> nil do
+     with (CADCmp.Layers[Tmp.Layer]) do
+      begin
+        if Active and Visible and (Tmp is FPickFilter) and Tmp.IsVisible(fViewNormalization, fVRP, DrawMode) then
+         begin
+           Distance := 0;
+           if Tmp.OnMe(Pt, fViewNormalization, WAperture, Distance) > PICK_NOOBJECT then
+            begin
+              PickedObjects.Add(Tmp);
+              Inc(Result);
+            end;
+         end;
+        Tmp := TmpIter.Next as TObject3D;
+      end;
+  finally
+    TmpIter.Free;
+  end;
+end;
+
+procedure TCADViewport3D.MouseMove(Shift: TShiftState; X, Y: Integer);
+var
+ Pos2D: TPoint2D;
+ Pos3D: TPoint3D;
+begin
+  if (not DisableMouseEvents) and Assigned(FOnMouseMove3D) then
+   begin
+     Pos2D := TransformPoint2D(Point2D(X, Y), ScreenToViewportTransform);
+     Pos3D := ViewportToWorld(Pos2D);
+     FOnMouseMove3D(Self, Shift, Pos3D.X, Pos3D.Y, Pos3D.Z, X, Y);
+   end;
+  inherited MouseMove(Shift, X, Y);
+end;
+
+procedure TCADViewport3D.MouseDown(Button: TMouseButton; Shift: TShiftState;
+                                X, Y: Integer);
+var
+ Pos2D: TPoint2D;
+ Pos3D: TPoint3D;
+begin
+  if (Button = mbRight) and (Shift = [ssAlt, ssShift, ssRight]) then
+   ShowMessage('TCADCmp3D developed by PV :)');
+  if (not DisableMouseEvents) and Assigned(FOnMouseDown3D) then
+   begin
+     Pos2D := TransformPoint2D(Point2D(X, Y), ScreenToViewportTransform);
+     Pos3D := ViewportToWorld(Pos2D);
+     FOnMouseDown3D(Self, Button, Shift, Pos3D.X, Pos3D.Y, Pos3D.Z, X, Y);
+   end;
+  inherited MouseDown(Button, Shift, X, Y);
+end;
+
+procedure TCADViewport3D.MouseUp(Button: TMouseButton; Shift: TShiftState;
+                            X, Y: Integer);
+var
+ Pos2D: TPoint2D;
+ Pos3D: TPoint3D;
+begin
+  if (not DisableMouseEvents) and Assigned(FOnMouseUp3D) then
+   begin
+     Pos2D := TransformPoint2D(Point2D(X, Y), ScreenToViewportTransform);
+     Pos3D := ViewportToWorld(Pos2D);
+     FOnMouseUp3D(Self, Button, Shift, Pos3D.X, Pos3D.Y, Pos3D.Z, X, Y);
+   end;
+  inherited MouseUp(Button, Shift, X, Y);
+end;
+
+function TCADViewport3D.WorldToObject(Obj: TObject3D; WPt: TPoint3D): TPoint3D;
+begin
+  WPt := CartesianPoint3D(WPt);
+  if Obj.HasTransform then
+   Result := TransformPoint3D(WPt, InvertTransform3D(Obj.ModelTransform))
+  else
+   Result := WPt;
+end;
+
+function TCADViewport3D.ObjectToWorld(Obj: TObject3D; OPt: TPoint3D): TPoint3D;
+begin
+  OPt := CartesianPoint3D(OPt);
+  if Obj.HasTransform then
+   Result := TransformPoint3D(OPt, Obj.ModelTransform)
+  else
+   Result := OPt;
+end;
+
+function TCADViewport3D.WorldToViewport(WPt: TPoint3D): TPoint2D;
+begin
+  Result := Point3DToPoint2D(TransformPoint3D(WPt, fViewOrientation));
+end;
+
+function TCADViewport3D.ViewportToWorld(VPt: TPoint2D): TPoint3D;
+var
+  Pt3D: TPoint3D;
+begin
+  Pt3D := Point2DToPoint3D(VPt);
+  Result := CartesianPoint3D(TransformPoint3D(Pt3D, InvertTransform3D(fViewOrientation)));
+end;
+
+function TCADViewport3D.WorldToNRC(WPt: TPoint3D): TPoint3D;
+begin
+  Result := CartesianPoint3D(TransformPoint3D(WPt, fViewNormalization));
+end;
+
+function TCADViewport3D.NRCToScreen(NPt: TPoint3D): TPoint;
+begin
+  Result := Point2DToPoint(TransformPoint2D(Point3DToPoint2D(NPt), fViewMapping));
+end;
+
+// =====================================================================
+// TCADParallelViewport3D
+// =====================================================================
+
+function TCADParallelViewport3D.BuildViewNormalizationTransform(View: TRect2D; FP, BP: TRealType): TTransf3D;
+begin
+  Result := ParallelViewNormalization3D(View, FP, BP);
+end;
+
+function TCADParallelViewport3D.GetRayVersor(const WPt: TPoint3D): TVector3D;
+begin
+  Result.X := -VPN.X;
+  Result.Y := -VPN.Y;
+  Result.Z := -VPN.Z;
+end;
+
+constructor TCADParallelViewport3D.Create(AOwner: TComponent);
+begin
+  inherited Create(AOwner);
+  SetCamera(Point3D(-100, -100, 100), Point3D(0, 0, 0), Versor3D(0, 0, 1));
+end;
+
+// =====================================================================
+// TCADOrtogonalViewport3D
+// =====================================================================
+
+constructor TCADOrtogonalViewport3D.Create(AOwner: TComponent);
+begin
+  inherited Create(AOwner);
+  fElevation := 0.0;
+  fView := vtTop;
+  fDirection := dtAhead;
+  UpdateViewportOrientation;
+end;
+
+function TCADOrtogonalViewport3D.BuildViewOrientationTransform(const LVRP: TPoint3D; const LVUP, LVPN: TVector3D): TTransf3D;
+var
+  TmpUp, TmpN: TVector3D;
+  TmpVRP: TPoint3D;
+begin
+  case fView of
+   vtFront: begin
+     TmpUP := Versor3D(0, 0, 1);
+     TmpVRP := Point3D(0, fElevation, 0);
+     if fDirection = dtAhead then
+      TmpN := Versor3D(0, 1, 0)
+     else
+      TmpN := Versor3D(0, -1, 0)
+   end;
+   vtSide: begin
+     TmpUP := Versor3D(0, 0, 1);
+     TmpVRP := Point3D(0, fElevation, 0);
+     if fDirection = dtAhead then
+      TmpN := Versor3D(1, 0, 0)
+     else
+      TmpN := Versor3D(-1, 0, 0);
+   end;
+   vtTop: begin
+     TmpUP := Versor3D(0, 1, 0);
+     TmpVRP := Point3D(0, 0, fElevation);
+     if fDirection = dtAhead then
+      TmpN := Versor3D(0, 0, 1)
+     else
+      TmpN := Versor3D(0, 0, -1);
+   end;
+  end;
+  // Chiama il metodo ereditato.
+  fVPN := TmpN;
+  fVUP := TmpUP;
+  FVRP := TmpVRP;
+  Result := inherited BuildViewOrientationTransform(TmpVRP, TmpUP, TmpN);
+end;
+
+procedure TCADOrtogonalViewport3D.SetView(V: TOrtoViewType);
+begin
+  if V <> fView then
+   begin
+     fView := V;
+     UpdateViewportOrientation;
+   end;
+end;
+
+procedure TCADOrtogonalViewport3D.SetDirection(D: TOrtoDirectionType);
+begin
+  if D <> fDirection then
+   begin
+     fDirection := D;
+     UpdateViewportOrientation;
+   end;
+end;
+
+procedure TCADOrtogonalViewport3D.SetElevation(E: TRealType);
+begin
+  if E <> fElevation then
+   begin
+     fElevation := E;
+     UpdateViewportOrientation;
+   end;
+end;
+
+// =====================================================================
+// TCADPerspectiveViewport3D
+// =====================================================================
+
+procedure TCADPerspectiveViewport3D.SetBClip(B: TRealType);
+begin
+  if B <= -fPlaneDistance then
+   B := -fPlaneDistance + 0.1;
+  inherited SetBClip(B);
+end;
+
+procedure TCADPerspectiveViewport3D.SetPlaneDistance(D: TRealType);
+begin
+  if D <> fPlaneDistance then
+   begin
+     fPlaneDistance := D;
+     if fBackPlane <= -fPlaneDistance then
+      fBackPlane := -fPlaneDistance + 0.1;
+     UpdateViewportOrientation;
+   end;
+end;
+
+function TCADPerspectiveViewport3D.GetCenterOfProjection: TPoint3D;
+begin
+  Result := ExtrudePoint3D(VRP, VPN, fPlaneDistance);
+end;
+
+function TCADPerspectiveViewport3D.BuildViewNormalizationTransform(View: TRect2D; FP, BP: TRealType): TTransf3D;
+begin
+  Result := PerspectiveViewNormalization3D(View, fPlaneDistance, FP, BP);
+end;
+
+constructor TCADPerspectiveViewport3D.Create(AOwner: TComponent);
+begin
+  inherited Create(AOwner);
+  SetCamera(Point3D(-100, -100, 100), Point3D(0, 0, 0), Versor3D(0, 0, 1));
+  fPlaneDistance := 1.0;
+  SetFieldOfView(DegToRad(30.0), 1.0);
+end;
+
+function TCADPerspectiveViewport3D.GetRayVersor(const WPt: TPoint3D): TVector3D;
+var
+  COP: TPoint3D;
+begin
+  COP := ExtrudePoint3D(VRP, VPN, fPlaneDistance);
+  Result := Direction3D(COP, WPt);
+end;
+
+procedure TCADPerspectiveViewport3D.SetFieldOfView(const Angle, Aspect: TRealType);
+var
+  VW: TRect2D;
+begin
+  StopRepaint;
+  VW := Rect2D(0.0, 0.0, 0.0, 0.0);
+  VW.Top := fPlaneDistance * Tan(Angle / 2.0);
+  VW.Bottom := -VW.Top;
+  VW.Left := VW.Top * Aspect;
+  VW.Right := -VW.Left;
+  ZoomWindow(VW);
+end;
+
+// =====================================================================
+// TCAD3DAxis
+// =====================================================================
+
+procedure DrawAx(Cnv: TCanvas; Org: TPoint; Dir: TVector2D; Sz: Integer; Cl: TColor; AxT: Byte);
+var
+  NormDir: TVector2D;
+  First: TPoint;
+  DDX, DDY, DNX, DNY: Integer;
+begin
+  with Cnv do
+   begin
+     Pen.Color := Cl;
+     Pen.Mode := pmCopy;
+     Pen.Style := psSolid;
+     Pen.Width := 1;
+     NormDir := Perpendicular2D(Dir);
+     First.X := Org.X + Trunc(Sz * 1.5);
+     First.Y := Org.Y - Trunc(Sz * 1.5);
+     DNX := Trunc(NormDir.X * Sz / 8);
+     DNY := Trunc(NormDir.Y * Sz / 8);
+     DDX := Trunc(Dir.X * Sz / 4);
+     DDY := Trunc(Dir.Y * Sz / 4);
+     MoveTo(First.X, First.Y);
+     LineTo(PenPos.X + Trunc(Dir.X * Sz), PenPos.Y + Trunc(Dir.Y * Sz));
+     LineTo(PenPos.X + DNX - DDX, PenPos.Y + DNY - DDY);
+     LineTo(PenPos.X - 2 * DNX, PenPos.Y - 2 * DNY);
+     LineTo(First.X + Trunc(Dir.X * Sz), First.Y + Trunc(Dir.Y * Sz));
+     // Label.
+     First.X := First.X + DDX + LongInt(Trunc(Dir.X * Sz));
+     First.Y := First.Y + DDY + LongInt(Trunc(Dir.Y * Sz));
+     SetBkMode(Handle, TRANSPARENT);
+     Font.Color := Cl;
+     Font.Name := 'Arial';
+     Font.Size := 7;
+     case AxT of
+      0: // Asse X.
+       TextOut(First.X, First.Y, 'X');
+      1: // Asse Y.
+       TextOut(First.X, First.Y, 'Y');
+      2: // Asse Z.
+       TextOut(First.X, First.Y, 'Z');
+     end;
+   end;
+end;
+
+constructor TCAD3DAxis.Create(Owner: TCADViewport3D);
+begin
+  inherited Create;
+
+  fOwnerView := Owner;
+  fXColor := clRed;
+  fYColor := clBlue;
+  fZColor := clGreen;
+  fVisible := True;
+  fSize := 30;
+end;
+
+procedure TCAD3DAxis.SetXColor(Cl: TColor);
+begin
+  if Cl <> fXColor then
+   begin
+     fXColor := Cl;
+     fOwnerView.Repaint;
+   end;
+end;
+
+procedure TCAD3DAxis.SetYColor(Cl: TColor);
+begin
+  if Cl <> fYColor then
+   begin
+     fYColor := Cl;
+     fOwnerView.Repaint;
+   end;
+end;
+
+procedure TCAD3DAxis.SetZColor(Cl: TColor);
+begin
+  if Cl <> fZColor then
+   begin
+     fZColor := Cl;
+     fOwnerView.Repaint;
+   end;
+end;
+
+procedure TCAD3DAxis.SetSize(Sz: Integer);
+begin
+  if Sz <> fSize then
+   begin
+     fSize := Sz;
+     fOwnerView.Repaint;
+   end;
+end;
+
+procedure TCAD3DAxis.SetVisible(V: Boolean);
+begin
+  if V <> fVisible then
+   begin
+     fVisible := V;
+     fOwnerView.Repaint;
+   end;
+end;
+
+procedure TCAD3DAxis.PaintAxes;
+var
+  Dir: TVector2D;
+  ZeroPt2D, OnePt2D: TPoint2D;
+begin
+  with fOwnerView do
+   try
+     ZeroPt2D := ViewportToScreen(WorldToViewport(Point3D(0, 0, 0)));
+     { X }
+     OnePt2D := ViewportToScreen(WorldToViewport(Point3D(1, 0, 0)));
+     Dir := Direction2D(ZeroPt2D, OnePt2D);
+     DrawAx(Cnv, P, Dir, fSize, fXColor, 0);
+     { Y }
+     OnePt2D := ViewportToScreen(WorldToViewport(Point3D(0, 1, 0)));
+     Dir := Direction2D(ZeroPt2D, OnePt2D);
+     DrawAx(Cnv, P, Dir, fSize, fYColor, 1);
+     { Z }
+     OnePt2D := ViewportToScreen(WorldToViewport(Point3D(0, 0, 1)));
+     Dir := Direction2D(ZeroPt2D, OnePt2D);
+     DrawAx(Cnv, P, Dir, fSize, fZColor, 2);
+   except
+   end;
 end;
 
 // =====================================================================
@@ -12387,13 +19460,15 @@ begin
     TCADViewport subclassing. Thanks Charles. }
   if Assigned(fNewWndProc) then
    begin
+     {$IFDEF windows}
+     if not (csDestroying in fLinkedViewport.ComponentState) then
+      SetWindowLong(fLinkedViewport.Handle, gwl_wndProc, {%H-}LongInt(fOldWndProc));
+     FreeObjectInstance(fNewWndProc);
+     {$ELSE}
      if not (csDestroying in fLinkedViewport.ComponentState) then
       fLinkedViewport.WindowProc := fOldWndProc;
+     {$ENDIF}
      fNewWndProc := nil;
-     //if not (csDestroying in fLinkedViewport.ComponentState) then
-     // SetWindowLong(fLinkedViewport.Handle, gwl_wndProc, PtrInt(fOldWndProc));
-     //FreeObjectInstance(fNewWndProc);
-     //fNewWndProc := nil;
    end;
   // Reassign the old on paint.
   if Assigned(fLinkedViewport) then
@@ -12406,11 +19481,14 @@ begin
   if Assigned(V) then
    begin
      V.FreeNotification(Self);
+     {$IFDEF windows}
+     fNewWndProc := MakeObjectInstance(SubclassedWinProc);
+     fOldWndProc := {%H-}Pointer(SetWindowLong(V.Handle, gwl_wndProc, {%H-}LongInt(fNewWndProc)));
+     {$ELSE}
      fNewWndProc := SubclassedWinProc;
      fOldWndProc := V.WindowProc;
      V.WindowProc := fNewWndProc;
-     //fNewWndProc := MakeObjectInstance(SubclassedWinProc);
-     //fOldWndProc := Pointer(SetWindowLong(V.Handle, gwl_wndProc, LongInt(fNewWndProc)));
+     {$ENDIF}
      // Assign the new OnPaint because it is called not only by window msgs.
      fOldOnPaint := V.OnPaint;
      V.OnPaint := ViewOnPaint;
@@ -12429,7 +19507,7 @@ begin
      CurrentState.Free;
      fCurrentState := nil;
      fDefaultState := DefState;
-     fCurrentState := fDefaultState.Create(Self, nil, TmpState);
+     fCurrentState := fDefaultState.Create(Self, nil, {%H-}TmpState);
    end
   else
    fDefaultState := DefState;
@@ -12484,7 +19562,7 @@ begin
   if not Assigned(fLinkedViewport) then Exit;
   if not Assigned(fCurrentState) then
    begin
-     fCurrentState := fDefaultState.Create(Self, nil, TmpState);
+     fCurrentState := fDefaultState.Create(Self, nil, {%H-}TmpState);
      Exit;
    end;
   if fIsSuspended then
@@ -12596,6 +19674,7 @@ function TCADPrg.ViewOnMouseMove(Sender: TObject; Shift: TShiftState; var X, Y: 
 var
   MouseButton: TCS4MouseButton;
 begin
+  fCurrentMousePoint := Point(X, Y);
   if ssLeft in Shift then
    MouseButton := cmbLeft
   else if ssRight in Shift then
@@ -12615,6 +19694,7 @@ function TCADPrg.ViewOnMouseDown(Sender: TObject; Button: TMouseButton; Shift: T
 var
   MouseButton: TCS4MouseButton;
 begin
+  fCurrentMousePoint := Point(X, Y);
   if Button = mbLeft then
    MouseButton := cmbLeft
   else if Button = mbRight then
@@ -12632,6 +19712,7 @@ function TCADPrg.ViewOnMouseUp(Sender: TObject; Button: TMouseButton; Shift: TSh
 var
   MouseButton: TCS4MouseButton;
 begin
+  fCurrentMousePoint := Point(X, Y);
   if Button = mbLeft then
    MouseButton := cmbLeft
   else if Button = mbRight then
@@ -12656,7 +19737,7 @@ begin
   fNewWndProc := nil;
   fOldWndProc := nil;
   fDefaultState := TCADIdleState;
-  fCurrentState := fDefaultState.Create(Self, nil, TmpState);
+  fCurrentState := fDefaultState.Create(Self, nil, {%H-}TmpState);
   fIgnoreEvents := False;
   fRefreshAfterOp := True;
 end;
@@ -12697,9 +19778,12 @@ begin
      Propagate := ViewOnMouseMove(LinkedViewport, KeysToShiftState(Keys), XPos, YPos);
    CM_INVALIDATE:
     begin
-      //Msg.Result := CallWindowProc(fOldWndProc, fLinkedViewport.Handle, Msg.Msg, Msg.WParam, Msg.LParam);
+      {$IFDEF windows}
+      Msg.Result := CallWindowProc(fOldWndProc, fLinkedViewport.Handle, Msg.Msg, Msg.WParam, Msg.LParam);
+      {$ELSE}
       if Assigned(fOldWndProc) then
        fOldWndProc(Msg);
+      {$ENDIF}
       ViewOnPaint(Self);
       Propagate := False;
     end;
@@ -12737,9 +19821,12 @@ begin
   LastSet := fLinkedViewport.DisableMouseEvents;
   try
     fLinkedViewport.DisableMouseEvents := not Propagate;
-    //Msg.Result := CallWindowProc(fOldWndProc, fLinkedViewport.Handle, Msg.Msg, Msg.WParam, Msg.LParam);
+    {$IFDEF windows}
+    Msg.Result := CallWindowProc(fOldWndProc, fLinkedViewport.Handle, Msg.Msg, Msg.WParam, Msg.LParam);
+    {$ELSE}
     if Assigned(fOldWndProc) then
      fOldWndProc(Msg);
+    {$ENDIF}
   finally
     fLinkedViewport.DisableMouseEvents := LastSet;
   end;
@@ -13079,6 +20166,301 @@ begin
 end;
 
 // =====================================================================
+// TCADPrg3D
+// =====================================================================
+
+function TCADPrg3D.GetVPPoint: TPoint2D;
+begin
+  Result := fCurrentViewportPoint;
+end;
+
+procedure TCADPrg3D.SetVPPoint(const Pt: TPoint2D);
+begin
+  fCurrentViewportPoint := CartesianPoint2D(Pt);
+  fCurrentWorldPoint := Viewport3D.ViewportToWorld(Pt);
+end;
+
+procedure TCADPrg3D.SetWorldPoint(Pt: TPoint3D);
+begin
+  fCurrentWorldPoint := CartesianPoint3D(Pt);
+  fCurrentViewportPoint := Viewport3D.WorldToViewport(Pt);
+end;
+
+function TCADPrg3D.WorldToWorkingPlane(WPt: TPoint3D): TPoint3D;
+begin
+  Result := CastPointOnPlane3D(WPt, Viewport3D.GetRayVersor(WPt), fWorkingPlaneNormal, fWorkingPlaneOrigin);
+end;
+
+function TCADPrg3D.GetCurrentWorkPlanePoint: TPoint3D;
+begin
+  Result := CastPointOnPlane3D(fCurrentWorldPoint, Viewport3D.GetRayVersor(fCurrentWorldPoint), fWorkingPlaneNormal, fWorkingPlaneOrigin);
+end;
+
+function TCADPrg3D.GetWorkingPlaneXDir: TVector3D;
+begin
+  Result := CrossProd3D(fWorkingPlaneUP, fWorkingPlaneNormal);
+end;
+
+function TCADPrg3D.GetWPSnappedPoint: TPoint3D;
+var
+  TmpPt, TmpOrg: TPoint2D;
+  TmpPt3D: TPoint3D;
+  TmpDir: TVector3D;
+begin
+  TmpDir := Viewport3D.GetRayVersor(fCurrentWorldPoint);
+  Result := CastPointOnPlane3D(fCurrentWorldPoint, TmpDir, fWorkingPlaneNormal, fWorkingPlaneOrigin);
+  if not UseSnap then
+   Exit;
+  TmpPt := WorldPointToPlane3D(Result, TmpDir, fWorkingPlaneNormal, fWorkingPlaneUP, fWorkingPlaneOrigin);
+  with TmpPt do
+   begin
+     if XSnap <> 0 then
+      TmpPt.X := Round(X / XSnap) * XSnap;
+     if YSnap <> 0 then
+      TmpPt.Y := Round(Y / YSnap) * YSnap;
+   end;
+  // Sul work plane i punti sono vincolati sul piano.
+  if Assigned(fSnapFilter) then
+   begin
+     if IsSamePoint3D(fSnapOriginPoint, Point3D(MaxCoord, MaxCoord, MaxCoord)) then
+      TmpOrg := Point2D(MaxCoord, MaxCoord)
+     else
+      begin
+        TmpPt3D := CastPointOnPlane3D(fSnapOriginPoint, TmpDir, fWorkingPlaneNormal, fWorkingPlaneOrigin);
+        TmpOrg := WorldPointToPlane3D(TmpPt3D, TmpDir, fWorkingPlaneNormal, fWorkingPlaneUP, fWorkingPlaneOrigin);
+      end;
+     fSnapFilter(Self, CurrentState, TmpOrg, TmpPt);
+   end;
+  Result := PlanePointToWorld3D(TmpPt, fWorkingPlaneNormal, fWorkingPlaneUP, fWorkingPlaneOrigin);
+end;
+
+function TCADPrg3D.ViewOnMouseMove(Sender: TObject; Shift: TShiftState; var X, Y: SmallInt): Boolean;
+begin
+  fCurrentViewportPoint := Viewport3D.ScreenToViewport(Point2D(X, Y));
+  fCurrentWorldPoint := Viewport3D.ViewportToWorld(fCurrentViewportPoint);
+  if Assigned(fMouseMoveFilter) then
+   begin
+     fMouseMoveFilter(Self, CurrentState, fCurrentWorldPoint, X, Y);
+     fCurrentViewportPoint := Viewport3D.WorldToViewport(fCurrentWorldPoint);
+     if Assigned(Viewport3D.OnMouseMove3D) then
+      // if there will be a friend directive like in C++, it will be better
+      // to call the MouseMove handler directly :)
+      Viewport3D.OnMouseMove3D(Sender, Shift, fCurrentWorldPoint.X, fCurrentWorldPoint.Y, fCurrentWorldPoint.Z, X, Y);
+     inherited ViewOnMouseMove(Sender, Shift, X, Y);
+     Result := False;
+   end
+  else
+   Result := inherited ViewOnMouseMove(Sender, Shift, X, Y);
+end;
+
+function TCADPrg3D.ViewOnMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; var X, Y: SmallInt): Boolean;
+begin
+  fCurrentViewportPoint := Viewport3D.ScreenToViewport(Point2D(X, Y));
+  fCurrentWorldPoint := Viewport3D.ViewportToWorld(fCurrentViewportPoint);
+  if Assigned(fMouseButtonFilter) then
+   begin
+     fMouseButtonFilter(Self, CurrentState, Button, fCurrentWorldPoint, X, Y);
+     fCurrentViewportPoint := Viewport3D.WorldToViewport(fCurrentWorldPoint);
+     if Assigned(Viewport3D.OnMouseDown3D) then
+      // if there will be a friend directive like in C++, it will be better
+      // to call the MouseMove handler directly :)
+      Viewport3D.OnMouseDown3D(Sender, Button, Shift, fCurrentWorldPoint.X, fCurrentWorldPoint.Y, fCurrentWorldPoint.Z, X, Y);
+     inherited ViewOnMouseDown(Sender, Button, Shift, X, Y);
+     Result := False;
+   end
+  else
+   Result := inherited ViewOnMouseDown(Sender, Button, Shift, X, Y);
+end;
+
+function TCADPrg3D.ViewOnMouseUp(Sender: TObject; Button: TMouseButton; Shift: TShiftState; var X, Y: SmallInt): Boolean;
+begin
+  fCurrentViewportPoint := Viewport3D.ScreenToViewport(Point2D(X, Y));
+  fCurrentWorldPoint := Viewport3D.ViewportToWorld(fCurrentViewportPoint);
+  if Assigned(fMouseButtonFilter) then
+   begin
+     fMouseButtonFilter(Self, CurrentState, Button, fCurrentWorldPoint, X, Y);
+     fCurrentViewportPoint := Viewport3D.WorldToViewport(fCurrentWorldPoint);
+     if Assigned(Viewport3D.OnMouseUp3D) then
+      // if there will be a friend directive like in C++, it will be better
+      // to call the MouseMove handler directly :)
+      Viewport3D.OnMouseUp3D(Sender, Button, Shift, fCurrentWorldPoint.X, fCurrentWorldPoint.Y, fCurrentWorldPoint.Z, X, Y);
+     inherited ViewOnMouseUp(Sender, Button, Shift, X, Y);
+     Result := False;
+   end
+  else
+   Result := inherited ViewOnMouseUp(Sender, Button, Shift, X, Y);
+end;
+
+function TCADPrg3D.GetViewport3D: TCADViewport3D;
+begin
+  Result := LinkedViewport as TCADViewport3D;
+end;
+
+procedure TCADPrg3D.SetViewport3D(View3D: TCADViewport3D);
+begin
+  LinkedViewport := View3D;
+end;
+
+constructor TCADPrg3D.Create(AOwner: TComponent);
+begin
+  inherited Create(AOwner);
+  XSnap := 10.0;
+  YSnap := 10.0;
+  fCursorSize := 10.0;
+  fWorkingPlaneNormal := Versor3D(0, 0, 1);
+  fWorkingPlaneUp := Versor3D(0, 1, 0);
+  fWorkingPlaneOrigin := Point3D(0, 0, 0);
+  fSnapOriginPoint := Point3D(MaxCoord, MaxCoord, MaxCoord);
+end;
+
+destructor TCADPrg3D.Destroy;
+begin
+  SetViewport3D(nil);
+  inherited Destroy;
+end;
+
+procedure _DrawWorkPlaneCursor(Viewport: TCADViewport3D; const PosWPt: TPoint3D; const X, Y, Z: TVector3D; const Siz: TRealType);
+var
+  SPt, AxSPt: TPoint;
+  AxPt: TPoint3D;
+begin
+  with Viewport do
+   begin
+     // Controlla se è visibile.
+     AxPt := ExtrudePoint3D(PosWPt, Z, Siz / 4.0);
+     AxPt := WorldToNRC(AxPt);
+     if AxPt.W <> 1.0 then
+      Exit;
+     // Disegna una griglietta
+     Canvas.Pen.Color := GridColor xor BackGroundColor;
+     Canvas.Pen.Style := psDot;
+     SetBkMode(Canvas.Handle, TRANSPARENT);
+     AxPt := ExtrudePoint3D(PosWPt, X, -Siz / 2.0);
+     AxPt := ExtrudePoint3D(AxPt, Y, -Siz / 2.0);
+     SPt := NRCToScreen(WorldToNRC(AxPt));
+     AxPt := ExtrudePoint3D(AxPt, Y, Siz);
+     AxSPt := NRCToScreen(WorldToNRC(AxPt));
+     Canvas.MoveTo(SPt.X, SPt.Y);
+     Canvas.LineTo(AxSpt.X, AxSpt.Y);
+     AxPt := PosWPt;
+     AxPt := ExtrudePoint3D(AxPt, Y, -Siz / 2.0);
+     SPt := NRCToScreen(WorldToNRC(AxPt));
+     AxPt := ExtrudePoint3D(AxPt, Y, Siz / 2.0);
+     AxSPt := NRCToScreen(WorldToNRC(AxPt));
+     Canvas.MoveTo(SPt.X, SPt.Y);
+     Canvas.LineTo(AxSpt.X, AxSpt.Y);
+     AxPt := ExtrudePoint3D(PosWPt, X, Siz / 2.0);
+     AxPt := ExtrudePoint3D(AxPt, Y, -Siz / 2.0);
+     SPt := NRCToScreen(WorldToNRC(AxPt));
+     AxPt := ExtrudePoint3D(AxPt, Y, Siz);
+     AxSPt := NRCToScreen(WorldToNRC(AxPt));
+     Canvas.MoveTo(SPt.X, SPt.Y);
+     Canvas.LineTo(AxSpt.X, AxSpt.Y);
+
+     AxPt := ExtrudePoint3D(PosWPt, Y, -Siz / 2.0);
+     AxPt := ExtrudePoint3D(AxPt, X, -Siz / 2.0);
+     SPt := NRCToScreen(WorldToNRC(AxPt));
+     AxPt := ExtrudePoint3D(AxPt, X, Siz);
+     AxSPt := NRCToScreen(WorldToNRC(AxPt));
+     Canvas.MoveTo(SPt.X, SPt.Y);
+     Canvas.LineTo(AxSpt.X, AxSpt.Y);
+     AxPt := PosWPt;
+     AxPt := ExtrudePoint3D(AxPt, X, -Siz / 2.0);
+     SPt := NRCToScreen(WorldToNRC(AxPt));
+     AxPt := ExtrudePoint3D(AxPt, X, Siz / 2.0);
+     AxSPt := NRCToScreen(WorldToNRC(AxPt));
+     Canvas.MoveTo(SPt.X, SPt.Y);
+     Canvas.LineTo(AxSpt.X, AxSpt.Y);
+     AxPt := ExtrudePoint3D(PosWPt, Y, Siz / 2.0);
+     AxPt := ExtrudePoint3D(AxPt, X, -Siz / 2.0);
+     SPt := NRCToScreen(WorldToNRC(AxPt));
+     AxPt := ExtrudePoint3D(AxPt, X, Siz);
+     AxSPt := NRCToScreen(WorldToNRC(AxPt));
+     Canvas.MoveTo(SPt.X, SPt.Y);
+     Canvas.LineTo(AxSpt.X, AxSpt.Y);
+     // Disegna gli assi.
+     Canvas.Pen.Style := psSolid;
+     SPt := NRCToScreen(WorldToNRC(PosWPt));
+     // Asse X
+     if Assigned(fAxis) then
+      Canvas.Pen.Color := fAxis.fXColor xor BackGroundColor
+     else
+      Canvas.Pen.Color := clRed xor BackGroundColor;
+     AxPt := ExtrudePoint3D(PosWPt, X, Siz / 2.0);
+     AxSPt := NRCToScreen(WorldToNRC(AxPt));
+     // Disegna il segmento.
+     Canvas.MoveTo(SPt.X, SPt.Y);
+     Canvas.LineTo(AxSpt.X, AxSpt.Y);
+     // Asse Y
+     if Assigned(fAxis) then
+      Canvas.Pen.Color := fAxis.fYColor xor BackGroundColor
+     else
+      Canvas.Pen.Color := clBlue xor BackGroundColor;
+     AxPt := ExtrudePoint3D(PosWPt, Y, Siz / 2.0);
+     AxSPt := NRCToScreen(WorldToNRC(AxPt));
+     // Disegna il segmento.
+     Canvas.MoveTo(SPt.X, SPt.Y);
+     Canvas.LineTo(AxSpt.X, AxSpt.Y);
+     // Asse Z
+     if Assigned(fAxis) then
+      Canvas.Pen.Color := fAxis.fZColor xor BackGroundColor
+     else
+      Canvas.Pen.Color := clGreen xor BackGroundColor;
+     AxPt := ExtrudePoint3D(PosWPt, Z, Siz / 4.0);
+     AxSPt := NRCToScreen(WorldToNRC(AxPt));
+
+     // Disegna il segmento.
+     Canvas.MoveTo(SPt.X, SPt.Y);
+     Canvas.LineTo(AxSpt.X, AxSpt.Y);
+   end;
+end;
+
+procedure TCADPrg3D.DrawCursorCross;
+begin
+  if (not Assigned(Viewport))  or (Viewport.HandleAllocated = False) or (Viewport.InRepainting) then
+   Exit;
+  with Viewport3D do
+   try
+     Canvas.Pen.Mode := pmXOr;
+     Canvas.Pen.Width := 1;
+
+     // Cancella quello vecchio.
+     _DrawWorkPlaneCursor(Viewport3D, fLastCursorPos,
+                   CrossProd3D(fWorkingPlaneUP, fWorkingPlaneNormal),
+                   fWorkingPlaneUP,
+                   fWorkingPlaneNormal,
+                   fCursorSize);
+     // Disegna quello nuovo
+     fLastCursorPos := CurrentWorkingPlanePoint;
+     _DrawWorkPlaneCursor(Viewport3D, fLastCursorPos,
+                   CrossProd3D(fWorkingPlaneUP, fWorkingPlaneNormal),
+                   fWorkingPlaneUP,
+                   fWorkingPlaneNormal,
+                   fCursorSize);
+   except
+   end;
+end;
+
+procedure TCADPrg3D.HideCursorCross;
+begin
+  if (not Assigned(Viewport)) or (Viewport.HandleAllocated = False)  or (Viewport.InRepainting) then
+   Exit;
+  with Viewport3D do
+   try
+     Canvas.Pen.Mode := pmXOr;
+     Canvas.Pen.Width := 1;
+
+     // Cancella il cursore
+     _DrawWorkPlaneCursor(Viewport3D, fLastCursorPos,
+                   CrossProd3D(fWorkingPlaneUP, fWorkingPlaneNormal),
+                   fWorkingPlaneUP,
+                   fWorkingPlaneNormal,
+                   fCursorSize);
+   except
+   end;
+end;
+
+// =====================================================================
 // TCADSysSynchroObject
 // =====================================================================
 
@@ -13127,11 +20509,6 @@ begin
 end;
 
 initialization
-  CADSysInitClassRegister;
-
-  CADSysRegisterClass(0, TContainer2D);
-  CADSysRegisterClass(1, TSourceBlock2D);
-  CADSysRegisterClass(2, TBlock2D);
 finalization
 end.
 

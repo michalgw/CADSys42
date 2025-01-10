@@ -18,7 +18,9 @@ uses
 
 procedure Register;
 begin
-  RegisterComponents('CADSys 4.2', [TRuler, TCADCmp2D, TCADViewport2D, TCADPrg2D]);
+  RegisterComponents('CADSys 4.2', [TRuler]);
+  RegisterComponents('CADSys 4.2 2D', [TCADCmp2D, TCADViewport2D, TCADPrg2D]);
+  RegisterComponents('CADSys 4.2 3D', [TCADCmp3D, TCADParallelViewport3D, TCADOrtogonalViewport3D, TCADPerspectiveViewport3D, TCADPrg3D]);
 end;
 
 end.

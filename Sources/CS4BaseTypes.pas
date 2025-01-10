@@ -25,7 +25,7 @@ type
    <B=Note>: I don't think that this type will change due to storage
    and speed efficency.
 }
-  TRealType = Single;
+  TRealType = Double; //maurog.
 {: This type is the result information of a clipping method. The
    clipping functions are used internally by the library and you
    don't need to use them directly.
@@ -118,10 +118,91 @@ type
 }
   TTransf2D = array[1..3, 1..3] of TRealType;
 
+{: This type defines the new way of considering a normal vector to a
+   plane. In <I=hrRightHand mode> the normal vector is computed by using
+   the right hand rule, in the <I=hrLeftHand mode> the normal vector is
+   computed by using the left hand rule.
+}
+  THandleRule = (hrRightHand, hrLeftHand);
+{: This type defines a 3D point in homogeneous coordinates.
+
+   All point informations in the library are in homogeneous
+   coordinates that is they have a third coordinate W. This
+   coordinate may be treated as divisor coefficient for the X, Y and Z
+   coordinates.
+
+   A 3D point in the euclidean space (the normally used point) can
+   be obtained by dividing each X, Y and Z coordinates by W:
+
+   <Code=
+     Xe := X / W;
+     Ye := Y / W;
+     Ze := Z / W;
+   >
+
+   A point to be valid must have at least one of its coordinates
+   not zero. If a point has W = 0 it is called a point at infinitum
+   and it is not allowed in the library. Normally this kind of
+   points is used to rapresent a direction but in the library
+   the <See Type=TVector3D> type is used instead.
+
+   Use <See Function=Point3DToPoint2D> and
+   <See Function=Point2DToPoint3D> functions to convert from 2D
+   points to 3D points.
+}
+  TPoint3D = record
+    X, Y, Z, W: TRealType;
+  end;
+{: This type defines a 3D vector or direction.
+
+   Use this type when you need to defines directions in the
+   3D space. In the case of 3D application this type may be
+   used in defining parametric segments or to specify
+   normal surface vectors.
+}
+  TVector3D = record
+    X, Y, Z: TRealType;
+  end;
+{: This type defines a 3D axis aligned rectangle.
+
+   The rectangle is specified by two of its corners, the
+   lower-left-front ones and the upper-right-back ones.
+   Use <See Function=Rect3DToRect2D> and
+   <See Function=Rect2DToRect3D> functions to convert from 2D
+   boxes to 3D boxes.
+
+   This type is useful to defines bounding boxes of shapes.
+}
+  TRect3D = record
+   case Byte of
+    0: (Left, Bottom, Front, W1, Right, Top, Back, W2: TRealType);
+    1: (FirstEdge, SecondEdge: TPoint3D);
+  end;
+{: This type defines a 3D transformation for homogeneous points
+   and vectors.
+
+   The convention used by the library is that a matrix premultiply
+   a point, that is:
+
+   <Code=TP = M * T>
+
+   where <I=TP> and <I=T> are points and <I=M> is a matrix.
+
+   The matrix is specified by columns, that is <I=M[2, 1]> is
+   the element at row 2 and column 1 and <I=M[1, 2]> is the
+   element at row 1 anc column 2.
+}
+  TTransf3D = array[1..4, 1..4] of TRealType;
+
   {: Vector of 2D points. }
   TVectPoints2D = array [0..0] of TPoint2D;
   {: Pointer to vector of 2D points. }
   PVectPoints2D = ^TVectPoints2D;
+
+  {: Vector of 3D points. }
+  TVectPoints3D = array [0..0] of TPoint3D;
+  {: Pointer to vector of 3D points. }
+  PVectPoints3D = ^TVectPoints3D;
 
 {: This class defines a decorative pen, that is a special Window pen that
    can have any pattern. The pattern is defined by a string of bits like
@@ -228,6 +309,20 @@ type
     property Canvas: TCanvas read fCanvas write fCanvas;
   end;
 
+  // For stream operation backward compatibility
+  TRealTypeSingle = Single;
+  TTransf2DSingle = array[1..3, 1..3] of TRealTypeSingle;
+  TTransf3DSingle = array[1..4, 1..4] of TRealTypeSingle;
+  TPoint2DSingle = record
+    X, Y, W: TRealTypeSingle;
+  end;
+  TPoint3DSingle = record
+    X, Y, Z, W: TRealTypeSingle;
+  end;
+  TVector3DSingle = record
+    X, Y, Z: TRealTypeSingle;
+  end;
+
 const
   TWOPI = 2 * Pi;
   SQRT2 = 1.414213562373;
@@ -262,6 +357,12 @@ const
   {: This is the null matrix for 2D transformation.
   }
   NullTransf2D: TTransf2D = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 1.0));
+  {: This is the identity matrix for 3D transformation.
+  }
+  IdentityTransf3D: TTransf3D = ((1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0), (0.0, 0.0, 0.0, 1.0));
+  {: This is the null matrix for 3D transformation.
+  }
+  NullTransf3D: TTransf3D = ((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0));
   {: This is the minimum value for coordinates.
   }
   MinCoord = -1.0E8;
@@ -474,6 +575,4 @@ begin
 end;
 
 end.
-
-
 
