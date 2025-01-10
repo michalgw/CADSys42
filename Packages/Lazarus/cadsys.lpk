@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CONFIG>
-  <Package Version="4">
+  <Package Version="5">
     <PathDelim Value="\"/>
     <Name Value="cadsys"/>
     <Type Value="RunAndDesignTime"/>
@@ -49,7 +49,7 @@ following conditions are met:
    and its suppliers harmless from and against any claims or liabilities 
    arising out of the use, reproduction, or  distribution of your programs.
 5. All Piero Valagussa libraries, source code and other files remain 
-   Piero Valagussa's exclusive property.
+   Piero Valagussa&apos;s exclusive property.
 6. If you use the LIBRARY to create another graphics library, you
    have to use this license for it.
 
@@ -67,7 +67,7 @@ shall not include or extend to any claim for or right to recover any damages, in
 but not limited to, loss of profit, data, or use of the software/component/library or 
 special, incidental or consequential damages, or other similar claims, even if Piero 
 Valagussa has been specifically advised of the possibility of such damages. In no event 
-will Piero Valagussa's liability for any damages to you or any other person ever exceed 
+will Piero Valagussa&apos;s liability for any damages to you or any other person ever exceed 
 the lower of the list price or the actual price paid for the package or the licence to 
 use the software/component/library, regardless of the form of the claim.
 
@@ -77,12 +77,12 @@ CONDITION OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE. ALL OTHER IMPL
 TERMS ARE EXCLUDED.
 
 Specifically, Piero Valagussa makes no representation or warranty that the software/
-component/library or documentation are &quot;error free.&quot; or meet any user's particular 
+component/library or documentation are &quot;error free.&quot; or meet any user&apos;s particular 
 standards, requirements, or needs.
 
 Piero Valagussa is not responsible for, and does not make any representation, warranty, 
 or condition concerning product, media, software/component/library, or documentation not 
-manufactured or supplied by Piero Valagussa, such as third parties' programs which are 
+manufactured or supplied by Piero Valagussa, such as third parties&apos; programs which are 
 designed using Piero Valagussa software/component/library or which include 
 Piero Valagussa programs or files. 
 
