@@ -5,10 +5,9 @@ unit Unit1;
 interface
 
 uses
-  LCLIntf, LCLType, LMessages, Messages, SysUtils, Classes, Graphics, Controls,
-  Forms, Dialogs, Menus, ComCtrls, ToolWin, Printers, ClipBrd, CADSys4,
-  CS4BaseTypes, CS4Tasks, CS4Shapes, CS4DXFModule, ExtCtrls, ImgList,
-  PrintersDlgs;
+  SysUtils, Classes, Graphics, Controls, Forms, Dialogs, Menus, ComCtrls,
+  Printers, ClipBrd, CADSys4, CS4BaseTypes, CS4Tasks, CS4Shapes, CS4DXFModule,
+  ExtCtrls, ImgList, PrintersDlgs;
 
 type
 
@@ -204,9 +203,9 @@ procedure TForm1.FormCreate(Sender: TObject);
 var
   TmpStr: TFileStream;
 begin
-  if FileExists(ExtractFilePath(Application.ExeName) + '\Library.blk') then
+  if FileExists(IncludeTrailingPathDelimiter(ExtractFilePath(Application.ExeName)) + 'Library.blk') then
    begin
-     TmpStr := TFileStream.Create(ExtractFilePath(Application.ExeName) + '\Library.blk', fmOpenRead);
+     TmpStr := TFileStream.Create(IncludeTrailingPathDelimiter(ExtractFilePath(Application.ExeName)) + 'Library.blk', fmOpenRead);
      try
       LocalCAD.LoadLibrary(TmpStr);
      finally

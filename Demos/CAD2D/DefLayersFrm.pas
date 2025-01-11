@@ -5,10 +5,8 @@ unit DefLayersFrm;
 interface
 
 uses
-  LCLIntf, LCLType, LMessages, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
-  Spin, {ColorGrd,} StdCtrls, Buttons,
-  CADSys4
-  ;
+  SysUtils, Classes, Graphics, Controls, Forms, Dialogs, Spin, StdCtrls,
+  Buttons, CADSys4;
 
 type
 

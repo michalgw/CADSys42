@@ -14,8 +14,8 @@ unit Unit1;
 interface
 
 uses
-  LCLIntf, LCLType, LMessages, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
-  CS4BaseTypes, CADSys4, StdCtrls, ExtCtrls;
+  SysUtils, Classes, Graphics, Controls, Forms, Dialogs, CS4BaseTypes, CADSys4,
+  StdCtrls, ExtCtrls;
 
 type
   TForm1 = class(TForm)
