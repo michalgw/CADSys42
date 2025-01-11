@@ -3329,6 +3329,7 @@ var
   Cont: Integer;
   TmpPt: TPoint2D;
   TmpBoolean: Boolean;
+  TmpPtSingle: TPoint2DSingle;
 begin
   { Load the standard properties }
   inherited;
@@ -3341,7 +3342,13 @@ begin
      for Cont := 0 to TmpWord - 1 do
       begin
         TmpPt.X := 0; TmpPt.Y := 0;
-        Read(TmpPt, SizeOf(TmpPt));
+        if( Version >= 'CAD423' ) then
+         Read(TmpPt, SizeOf(TmpPt))
+        else
+        begin
+          Read(TmpPtSingle, SizeOf(TmpPtSingle));
+          TmpPt.X := TmpPtSingle.X; TmpPt.Y := TmpPtSingle.Y; TmpPt.W := TmpPtSingle.W;
+        end;
         fPoints.Points[Cont] := TmpPt;
       end;
      TmpBoolean := False;
