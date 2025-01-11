@@ -14330,7 +14330,7 @@ begin
       fOnVerError(Self, stDrawing, Stream, TmpBool)
      else if (not TmpBool) and Assigned(fOnVerErrorEx) then
       fOnVerErrorEx(Self, stDrawing, Stream, TmpVersion, TmpBool)
-     else if (not TmpBool) and (TmpVersion = 'CAD422') then
+     else if (not TmpBool) and (Copy(TmpVersion, 1, 3) = 'CAD') then
       begin
         { Se la versione del file è CAD422 allora eseguo la conversione a CAD423 automaticamente.
           Funziona solo per la versione CAD422 con TRealType=Single }
@@ -14378,7 +14378,13 @@ begin
      if (not TmpBool) and Assigned(fOnVerError) then
       fOnVerError(Self, stLibrary, Stream, TmpBool)
      else if (not TmpBool) and Assigned(fOnVerErrorEx) then
-      fOnVerErrorEx(Self, stLibrary, Stream, TmpVersion, TmpBool);
+      fOnVerErrorEx(Self, stLibrary, Stream, TmpVersion, TmpBool)
+     else if (not TmpBool) and (Copy(TmpVersion, 1, 3) = 'CAD') then
+      begin
+        { Se la versione del file è CAD422 allora eseguo la conversione a CAD423 automaticamente.
+          Funziona solo per la versione CAD422 con TRealType=Single }
+        TmpBool := True;
+      end;
      if TmpBool then
       begin
         { Load the source blocks. }
