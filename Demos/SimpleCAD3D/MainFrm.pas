@@ -84,9 +84,6 @@ type
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormPaint(Sender: TObject);
-    procedure LocalCADInvalidFileVersionEx(Sender: TObject;
-      const StreamType: TStreamType; const Stream: TStream;
-      var Version: TCADVersion; var Resume: Boolean);
     procedure LocalViewMouseMove3D(Sender: TObject; Shift: TShiftState; WX,
       WY, WZ: Single; X, Y: Integer);
     procedure ModeModifiersChkClick(Sender: TObject);
@@ -242,14 +239,6 @@ procedure TMainForm.FormPaint(Sender: TObject);
 begin
   LocalPerspView.Repaint;
   LocalOrtoView.Repaint;
-end;
-
-procedure TMainForm.LocalCADInvalidFileVersionEx(Sender: TObject;
-  const StreamType: TStreamType; const Stream: TStream;
-  var Version: TCADVersion; var Resume: Boolean);
-begin
-  if (Version = 'CAD422') then Version := 'CAD423';
-  Resume:=True;
 end;
 
 procedure TMainForm.LocalCADLoadProgress(Sender: TObject;

@@ -1,16 +1,19 @@
 object MainForm: TMainForm
   Left = 244
-  Height = 954
+  Height = 795
   Top = 38
-  Width = 1350
+  Width = 1125
   Caption = 'A very simple CAD 3d - CADSys 4.0 v 1.0'
-  ClientHeight = 954
-  ClientWidth = 1350
+  ClientHeight = 795
+  ClientWidth = 1125
   Color = clBtnFace
-  DesignTimePPI = 144
-  Font.Color = clWindowText
-  Font.Height = -17
-  Font.Name = 'MS Sans Serif'
+  DesignTimePPI = 120
+  Font.CharSet = ANSI_CHARSET
+  Font.Color = clBlack
+  Font.Height = -13
+  Font.Name = 'Arial'
+  Font.Pitch = fpVariable
+  Font.Quality = fqDraft
   OnCreate = FormCreate
   OnDestroy = FormDestroy
   OnPaint = FormPaint
@@ -19,128 +22,130 @@ object MainForm: TMainForm
   object Splitter1: TSplitter
     Cursor = crVSplit
     Left = 0
-    Height = 4
-    Top = 838
-    Width = 1350
+    Height = 3
+    Top = 699
+    Width = 1125
     Align = alBottom
     MinSize = 1
     ResizeAnchor = akBottom
   end
   object InfoPnl: TPanel
     Left = 0
-    Height = 112
-    Top = 842
-    Width = 1350
+    Height = 93
+    Top = 702
+    Width = 1125
     Align = alBottom
     BevelOuter = bvLowered
-    ClientHeight = 112
-    ClientWidth = 1350
+    ClientHeight = 93
+    ClientWidth = 1125
     Font.CharSet = ANSI_CHARSET
-    Font.Color = clWindowText
-    Font.Height = -17
+    Font.Color = clBlack
+    Font.Height = -13
     Font.Name = 'Arial'
+    Font.Pitch = fpVariable
+    Font.Quality = fqDraft
     ParentBackground = False
     ParentFont = False
     TabOrder = 0
     object CurPosLbl: TLabel
-      Left = 8
-      Height = 19
-      Top = 8
-      Width = 111
+      Left = 7
+      Height = 16
+      Top = 7
+      Width = 87
       Caption = 'Cursor position'
     end
     object WPlanePosLbl: TLabel
-      Left = 8
-      Height = 19
-      Top = 38
-      Width = 152
+      Left = 7
+      Height = 16
+      Top = 32
+      Width = 118
       Caption = 'Working plane origin'
     end
     object WPlaneNrmLbl: TLabel
-      Left = 248
-      Height = 19
-      Top = 38
-      Width = 160
+      Left = 207
+      Height = 16
+      Top = 32
+      Width = 126
       Caption = 'Working plane normal'
     end
     object WPlaneUP: TLabel
-      Left = 488
-      Height = 19
-      Top = 38
-      Width = 133
+      Left = 407
+      Height = 16
+      Top = 32
+      Width = 105
       Caption = 'Working plane UP'
     end
     object SnapLbl: TLabel
-      Left = 398
-      Height = 19
-      Top = 8
-      Width = 38
+      Left = 332
+      Height = 16
+      Top = 7
+      Width = 30
       Caption = 'Snap'
     end
     object GridStepLbl: TLabel
-      Left = 600
-      Height = 19
-      Top = 8
-      Width = 66
+      Left = 500
+      Height = 16
+      Top = 7
+      Width = 53
       Caption = 'Grid step'
     end
     object Bevel1: TBevel
-      Left = 840
-      Height = 99
-      Top = 8
-      Width = 219
+      Left = 700
+      Height = 83
+      Top = 7
+      Width = 183
     end
     object TaskInfoLbl: TLabel
-      Left = 8
+      Left = 7
       Height = 1
-      Top = 90
+      Top = 75
       Width = 1
       Font.CharSet = ANSI_CHARSET
       Font.Color = clWindowText
-      Font.Height = -14
+      Font.Height = -12
       Font.Name = 'Arial'
       ParentFont = False
     end
     object CursorPosSLbl: TStaticText
-      Left = 120
-      Height = 26
-      Top = 8
-      Width = 256
+      Left = 100
+      Height = 22
+      Top = 7
+      Width = 213
       Alignment = taCenter
       BorderStyle = sbsSunken
       Caption = 'CursorPosSLbl'
       Color = 13425629
       Font.CharSet = ANSI_CHARSET
       Font.Color = clWindowText
-      Font.Height = -17
+      Font.Height = -14
       Font.Name = 'Arial'
       ParentFont = False
       ParentColor = False
       TabOrder = 0
     end
     object UseSnapChk: TCheckBox
-      Left = 848
-      Height = 24
-      Top = 15
-      Width = 93
+      Left = 707
+      Height = 20
+      Top = 13
+      Width = 76
       Caption = 'Use snap'
       TabOrder = 1
       OnClick = ModeModifiersChkClick
     end
     object UseOrtoChk: TCheckBox
-      Left = 848
-      Height = 24
-      Top = 45
-      Width = 197
+      Left = 707
+      Height = 20
+      Top = 38
+      Width = 158
       Caption = 'Use ortogonal constrain'
       TabOrder = 2
       OnClick = ModeModifiersChkClick
     end
     object ShowGrdChk: TCheckBox
-      Left = 848
-      Height = 24
-      Top = 75
-      Width = 98
+      Left = 707
+      Height = 20
+      Top = 63
+      Width = 78
       Caption = 'Show grid'
       Checked = True
       State = cbChecked
@@ -148,10 +153,10 @@ object MainForm: TMainForm
       OnClick = ModeModifiersChkClick
     end
     object SnapSLbl: TStaticText
-      Left = 442
-      Height = 26
-      Top = 8
-      Width = 152
+      Left = 368
+      Height = 22
+      Top = 7
+      Width = 127
       Alignment = taCenter
       BorderStyle = sbsSunken
       Caption = 'SnapSLbl'
@@ -160,10 +165,10 @@ object MainForm: TMainForm
       TabOrder = 4
     end
     object GridStepSLbl: TStaticText
-      Left = 675
-      Height = 27
-      Top = 8
-      Width = 159
+      Left = 563
+      Height = 23
+      Top = 7
+      Width = 133
       Alignment = taCenter
       BorderStyle = sbsSunken
       Caption = 'GridStepSLbl'
@@ -172,10 +177,10 @@ object MainForm: TMainForm
       TabOrder = 5
     end
     object WPlanePosSLbl: TStaticText
-      Left = 8
-      Height = 27
-      Top = 60
-      Width = 226
+      Left = 7
+      Height = 23
+      Top = 50
+      Width = 188
       Alignment = taCenter
       BorderStyle = sbsSunken
       Caption = 'WPlanePosSLbl'
@@ -184,10 +189,10 @@ object MainForm: TMainForm
       TabOrder = 6
     end
     object WPlaneNrmSLbl: TStaticText
-      Left = 248
-      Height = 27
-      Top = 60
-      Width = 226
+      Left = 207
+      Height = 23
+      Top = 50
+      Width = 188
       Alignment = taCenter
       BorderStyle = sbsSunken
       Caption = 'WPlaneNrmSLbl'
@@ -196,10 +201,10 @@ object MainForm: TMainForm
       TabOrder = 7
     end
     object WPlaneUpSLbl: TStaticText
-      Left = 488
-      Height = 27
-      Top = 60
-      Width = 226
+      Left = 407
+      Height = 23
+      Top = 50
+      Width = 188
       Alignment = taCenter
       BorderStyle = sbsSunken
       Caption = 'WPlaneUpSLbl'
@@ -210,22 +215,22 @@ object MainForm: TMainForm
   end
   object ToolPnl: TPanel
     Left = 0
-    Height = 792
-    Top = 46
-    Width = 72
+    Height = 661
+    Top = 38
+    Width = 60
     Align = alLeft
-    ClientHeight = 792
-    ClientWidth = 72
+    ClientHeight = 661
+    ClientWidth = 60
     ParentBackground = False
     TabOrder = 1
     object ToolsBar: TToolBar
       Left = 1
-      Height = 790
+      Height = 659
       Top = 1
-      Width = 70
+      Width = 58
       Align = alClient
-      ButtonHeight = 46
-      ButtonWidth = 48
+      ButtonHeight = 38
+      ButtonWidth = 40
       Images = ToolsImages
       ParentShowHint = False
       ShowHint = True
@@ -233,7 +238,7 @@ object MainForm: TMainForm
       object MoveBtn: TToolButton
         Left = 1
         Hint = 'Move object'
-        Top = 294
+        Top = 244
         Caption = 'MoveBtn'
         ImageIndex = 1
         OnClick = MoveBtnClick
@@ -241,7 +246,7 @@ object MainForm: TMainForm
       object RotateBtn: TToolButton
         Left = 1
         Hint = 'Rotate object'
-        Top = 394
+        Top = 327
         Caption = 'RotateBtn'
         ImageIndex = 2
         OnClick = RotateBtnClick
@@ -250,7 +255,7 @@ object MainForm: TMainForm
       object ScaleBtn: TToolButton
         Left = 1
         Hint = 'scale object'
-        Top = 340
+        Top = 282
         Caption = 'ScaleBtn'
         ImageIndex = 3
         OnClick = ScaleBtnClick
@@ -258,15 +263,15 @@ object MainForm: TMainForm
       object EditPrimBtn: TToolButton
         Left = 1
         Hint = 'Edit object'
-        Top = 440
+        Top = 365
         Caption = 'EditPrimBtn'
         ImageIndex = 17
         OnClick = EditPrimBtnClick
       end
       object ToolButton8: TToolButton
         Left = 1
-        Top = 278
-        Width = 48
+        Top = 230
+        Width = 40
         Caption = 'ToolButton8'
         ImageIndex = 8
         Style = tbsSeparator
@@ -275,7 +280,7 @@ object MainForm: TMainForm
       object FaceBtn: TToolButton
         Left = 1
         Hint = 'Create a planar face'
-        Top = 232
+        Top = 192
         Caption = 'FaceBtn'
         ImageIndex = 5
         OnClick = FaceBtnClick
@@ -283,7 +288,7 @@ object MainForm: TMainForm
       object PolyExtrBtn: TToolButton
         Left = 1
         Hint = 'Create an extruded profile'
-        Top = 140
+        Top = 116
         Caption = 'PolyExtrBtn'
         ImageIndex = 6
         OnClick = PolyExtrBtnClick
@@ -292,7 +297,7 @@ object MainForm: TMainForm
       object CuboBtn: TToolButton
         Left = 1
         Hint = 'Create a cube'
-        Top = 48
+        Top = 40
         Caption = 'CuboBtn'
         ImageIndex = 7
         OnClick = CuboBtnClick
@@ -300,7 +305,7 @@ object MainForm: TMainForm
       object CilBtn: TToolButton
         Left = 1
         Hint = 'Create a cilinder'
-        Top = 186
+        Top = 154
         Caption = 'CilBtn'
         ImageIndex = 8
         OnClick = CilBtnClick
@@ -309,7 +314,7 @@ object MainForm: TMainForm
       object SplineExtrBtn: TToolButton
         Left = 1
         Hint = 'Create an extruded spline'
-        Top = 94
+        Top = 78
         Caption = 'SplineExtrBtn'
         ImageIndex = 9
         OnClick = SplineExtrBtnClick
@@ -324,8 +329,8 @@ object MainForm: TMainForm
       end
       object ToolButton1: TToolButton
         Left = 1
-        Top = 286
-        Width = 48
+        Top = 237
+        Width = 40
         Caption = 'ToolButton1'
         ImageIndex = 11
         Style = tbsSeparator
@@ -334,7 +339,7 @@ object MainForm: TMainForm
       object ZoomInBtn: TToolButton
         Left = 1
         Hint = 'Zoom in'
-        Top = 486
+        Top = 403
         Caption = 'ZoomInBtn'
         ImageIndex = 11
         OnClick = ZoomInBtnClick
@@ -342,7 +347,7 @@ object MainForm: TMainForm
       object ZoomOutBtn: TToolButton
         Left = 1
         Hint = 'Zoom out'
-        Top = 532
+        Top = 441
         Caption = 'ZoomOutBtn'
         ImageIndex = 12
         OnClick = ZoomOutBtnClick
@@ -351,7 +356,7 @@ object MainForm: TMainForm
       object PanBtn: TToolButton
         Left = 1
         Hint = 'Pan'
-        Top = 716
+        Top = 593
         Caption = 'PanBtn'
         ImageIndex = 16
         OnClick = PanBtnClick
@@ -359,7 +364,7 @@ object MainForm: TMainForm
       object ZoomAllBtn: TToolButton
         Left = 1
         Hint = 'Zoom all'
-        Top = 578
+        Top = 479
         Caption = 'ZoomAllBtn'
         ImageIndex = 13
         OnClick = ZoomAllBtnClick
@@ -368,7 +373,7 @@ object MainForm: TMainForm
       object DollyBtn: TToolButton
         Left = 1
         Hint = 'Dolly'
-        Top = 670
+        Top = 555
         Caption = 'DollyBtn'
         ImageIndex = 15
         OnClick = DollyBtnClick
@@ -376,15 +381,15 @@ object MainForm: TMainForm
       object OrbitBtn: TToolButton
         Left = 1
         Hint = 'Orbit'
-        Top = 624
+        Top = 517
         Caption = 'OrbitBtn'
         ImageIndex = 14
         OnClick = OrbitBtnClick
       end
       object ToolButton2: TToolButton
         Left = 1
-        Top = 386
-        Width = 48
+        Top = 320
+        Width = 40
         Caption = 'ToolButton2'
         ImageIndex = 15
         Style = tbsSeparator
@@ -394,22 +399,22 @@ object MainForm: TMainForm
   end
   object CmdPnl: TPanel
     Left = 0
-    Height = 46
+    Height = 38
     Top = 0
-    Width = 1350
+    Width = 1125
     Align = alTop
-    ClientHeight = 46
-    ClientWidth = 1350
+    ClientHeight = 38
+    ClientWidth = 1125
     ParentBackground = False
     TabOrder = 2
     object CmdsBar: TToolBar
       Left = 1
-      Height = 44
+      Height = 36
       Top = 1
-      Width = 1348
+      Width = 1123
       Align = alClient
-      ButtonHeight = 38
-      ButtonWidth = 38
+      ButtonHeight = 32
+      ButtonWidth = 32
       Images = CmdsImages
       ParentShowHint = False
       ShowHint = True
@@ -423,7 +428,7 @@ object MainForm: TMainForm
         OnClick = NewBtnClick
       end
       object LoadBtn: TToolButton
-        Left = 39
+        Left = 33
         Hint = 'Open file'
         Top = 2
         Caption = 'LoadBtn'
@@ -431,7 +436,7 @@ object MainForm: TMainForm
         OnClick = LoadBtnClick
       end
       object SaveBtn: TToolButton
-        Left = 77
+        Left = 65
         Hint = 'Save file'
         Top = 2
         Caption = 'SaveBtn'
@@ -439,7 +444,7 @@ object MainForm: TMainForm
         OnClick = SaveBtnClick
       end
       object ImportBtn: TToolButton
-        Left = 115
+        Left = 97
         Hint = 'Import DXF'
         Top = 2
         Caption = 'ImportBtn'
@@ -447,35 +452,37 @@ object MainForm: TMainForm
         OnClick = ImportBtnClick
       end
       object ToolButton3: TToolButton
-        Left = 153
+        Left = 129
         Top = 2
         Caption = 'ToolButton3'
       end
     end
   end
   object ViewPnl: TPanel
-    Left = 72
-    Height = 792
-    Top = 46
-    Width = 1278
+    Left = 60
+    Height = 661
+    Top = 38
+    Width = 1065
     Align = alClient
     Caption = 'ViewPnl'
-    ClientHeight = 792
-    ClientWidth = 1278
+    ClientHeight = 661
+    ClientWidth = 1065
     ParentBackground = False
     TabOrder = 3
     object PageControl1: TPageControl
       Left = 1
-      Height = 790
+      Height = 659
       Top = 1
-      Width = 1276
+      Width = 1063
       ActivePage = TabOrto
       Align = alClient
       AutoSize = True
       Font.CharSet = ANSI_CHARSET
-      Font.Color = clWindowText
-      Font.Height = -14
+      Font.Color = clBlack
+      Font.Height = -12
       Font.Name = 'Arial'
+      Font.Pitch = fpVariable
+      Font.Quality = fqDraft
       ParentFont = False
       TabIndex = 1
       TabOrder = 0
@@ -483,13 +490,13 @@ object MainForm: TMainForm
       object TabPerspective: TTabSheet
         AutoSize = True
         Caption = 'Perspective'
-        ClientHeight = 761
-        ClientWidth = 1268
+        ClientHeight = 631
+        ClientWidth = 1055
         object LocalPerspView: TCADPerspectiveViewport3D
           Left = 0
-          Height = 761
+          Height = 631
           Top = 0
-          Width = 1268
+          Width = 1055
           Align = alClient
           AspectRatio = 1
           ControlPointsColor = clBlack
@@ -505,13 +512,13 @@ object MainForm: TMainForm
       end
       object TabOrto: TTabSheet
         Caption = 'TabOrto'
-        ClientHeight = 761
-        ClientWidth = 1268
+        ClientHeight = 631
+        ClientWidth = 1055
         object LocalOrtoView: TCADParallelViewport3D
           Left = 0
-          Height = 761
+          Height = 631
           Top = 0
-          Width = 1268
+          Width = 1055
           Align = alClient
           AspectRatio = 1
           ControlPointsColor = clBlack
@@ -530,9 +537,8 @@ object MainForm: TMainForm
   object LocalCAD: TCADCmp3D
     OnLoadProgress = LocalCADLoadProgress
     OnSaveProgress = LocalCADSaveProgress
-    OnInvalidFileVersionEx = LocalCADInvalidFileVersionEx
-    Left = 156
-    Top = 120
+    Left = 130
+    Top = 100
   end
   object LocalCADPrg: TCADPrg3D
     UseSnap = True
@@ -544,14 +550,14 @@ object MainForm: TMainForm
     OnIdle = LocalCADPrgIdle
     OnDescriptionChanged = LocalCADPrgDescriptionChanged
     CursorSize = 10
-    Left = 300
-    Top = 120
+    Left = 250
+    Top = 100
   end
   object ToolsImages: TImageList
     Height = 25
     Width = 25
-    Left = 480
-    Top = 120
+    Left = 400
+    Top = 100
     Bitmap = {
       4C7A1200000019000000190000007C0500000000000078DAED9DC191DB300C45
       554A4A49292E654BF12975E89C1A727009E90089E5A55722090A203E68C90BCC
@@ -601,8 +607,8 @@ object MainForm: TMainForm
     }
   end
   object CmdsImages: TImageList
-    Left = 684
-    Top = 120
+    Left = 570
+    Top = 100
     Bitmap = {
       4C7A040000001000000010000000110100000000000078DAED560B0E85200CE3
       E61C8DA361780282ECD301C6BCC4258B3AEC808D565D8CD171268DB5E3E94ABD
@@ -619,19 +625,19 @@ object MainForm: TMainForm
   object OpenDialog1: TOpenDialog
     DefaultExt = '.cs4'
     Filter = 'CADSys 4.0 drawing file|*.cs4'
-    Left = 156
-    Top = 264
+    Left = 130
+    Top = 220
   end
   object SaveDialog1: TSaveDialog
     DefaultExt = '.cs4'
     Filter = 'CADSys 4.0 drawing file|*.cs4'
-    Left = 300
-    Top = 264
+    Left = 250
+    Top = 220
   end
   object OpenDialog2: TOpenDialog
     DefaultExt = '.dxf'
     Filter = 'DXF drawing file|*.dxf'
-    Left = 480
-    Top = 264
+    Left = 400
+    Top = 220
   end
 end
