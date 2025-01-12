@@ -24,86 +24,28 @@
       </Linking>
     </CompilerOptions>
     <Description Value="CADSys 4 is a complete vectorial graphic library for Delphi that comes with full sources and documentation. You are now able to create complex and beautiful CAD-like interfaces to your application with the power of OOP and a native library for Delphi. (src: torry.net)"/>
-    <License Value="CADSys 4, Copyright © 2001 by Piero Valagussa &lt;pivalag@tin.it>.  
-All rights reserved.
+    <License Value="MIT License
 
-You are grant to use the CADSys library (LIBRARY) in your programs 
-for either commercial or non commercial uses, provided that the 
-following conditions are met:
+Copyright (c) 2001 by Piero Valagussa &lt;raspipv@gmail.com>
 
-1. All copies of the programs you create must bear this copyright (in
-   a dialog box or somewhere else):
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the &quot;Software&quot;), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-   CADSys 4, Copyright © 2001 by Piero Valagussa &lt;pivalag@tin.it>.  
-   All rights reserved.   
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-2. You may not remove or alter any Piero Valagussa copyright. trademark, 
-   or other proprietary rights notice contained in any portion of 
-   Piero Valagussa libraries, source code, redistributables or other 
-   files that bear such a notice.
-3. You will remain solely responsible to anyone receiving your programs 
-   for support, service,  upgrades, or technical or other assistance, 
-   and such recipients will have no right to contact  Piero Valagussa 
-   for such services or assistance.
-4. You will indemnify and hold Piero Valagussa, its related companies, 
-   and its suppliers harmless from and against any claims or liabilities 
-   arising out of the use, reproduction, or  distribution of your programs.
-5. All Piero Valagussa libraries, source code and other files remain 
-   Piero Valagussa&apos;s exclusive property.
-6. If you use the LIBRARY to create another graphics library, you
-   have to use this license for it.
-
-By using the library you accept that requirements and the following.
-
-LIMITED WARRANTY
-----------------
-
-NO WARRANTY IS PROVIDED TO ANYONE FOR THIS SOFTWARE/COMPONENT/LIBRARY. 
-THIS SOFTWARE/COMPONENT/LIBRARY (INCLUDING INSTRUCTION FOR USE) ARE PROVIDES 
-&quot;AS IS&quot; WITHOUT WARRANTY OF ANY KIND.
-
-The entire and  exclusive liability and remedy for breach of this limited warranty 
-shall not include or extend to any claim for or right to recover any damages, including 
-but not limited to, loss of profit, data, or use of the software/component/library or 
-special, incidental or consequential damages, or other similar claims, even if Piero 
-Valagussa has been specifically advised of the possibility of such damages. In no event 
-will Piero Valagussa&apos;s liability for any damages to you or any other person ever exceed 
-the lower of the list price or the actual price paid for the package or the licence to 
-use the software/component/library, regardless of the form of the claim.
-
-PIERO VALAGUSSA SPECIFICALLY DISCLAIMS ALL OTHER WARRANTIES, REPRESENTATIONS, OR 
-CONDITIONS, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO, ANY IMPLIED WARRANTY OR 
-CONDITION OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE. ALL OTHER IMPLIED 
-TERMS ARE EXCLUDED.
-
-Specifically, Piero Valagussa makes no representation or warranty that the software/
-component/library or documentation are &quot;error free.&quot; or meet any user&apos;s particular 
-standards, requirements, or needs.
-
-Piero Valagussa is not responsible for, and does not make any representation, warranty, 
-or condition concerning product, media, software/component/library, or documentation not 
-manufactured or supplied by Piero Valagussa, such as third parties&apos; programs which are 
-designed using Piero Valagussa software/component/library or which include 
-Piero Valagussa programs or files. 
-
-GENERAL PROVISIONS
-------------------
-
-This statement may only be modified in writing signed by you and an authorised officer 
-of Piero Valagussa. If any provision of this statement is found void or unenforceable, 
-the remainder will remain valid and enforceable according to its terms. If any remedy 
-provided is determined to have failed of its essential purpose, all limitations of 
-liability and exclusions of damages set forth in the limited warranty shall remain in 
-effect.
-
-This statement shall be construed, interpreted and governed by the laws of the Italian 
-State. This statement gives you specific legal rights: you may have others which vary 
-from state to state and from country to country. (UK STATUTORY RIGHTS ARE NOT AFFECTED 
-OR PREJUDICED AS TO SOFTWARE/COMPONENT/LIBRARY ACQUIRED OTHER THAN IN THE COURSE OF A 
-BUSINESS.) Piero Valagussa reserves all rights not specifically granted in this 
-statement.
-"/>
-    <Version Major="4" Minor="2"/>
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE."/>
+    <Version Major="4" Minor="3"/>
     <Files Count="7">
       <Item1>
         <HasRegisterProc Value="True"/>
@@ -135,6 +77,7 @@ statement.
         <UnitName Value="cadsysreg"/>
       </Item7>
     </Files>
+    <CompatibilityMode Value="True"/>
     <RequiredPkgs Count="2">
       <Item1>
         <PackageName Value="LCL"/>
