@@ -13,10 +13,10 @@ uses
   Process;
 
 const
-  Src: string = '.';
-  Use: string = '.';
+  Src: string = 'Demos';
+  Use: string = 'Packages';
   Tst: string = 'testconsole.lpi';
-  Pkg: array of string = ('PoweredBy', 'splashabout');
+  Pkg: array of string = ();
 
 var
   Output, Line: ansistring;
